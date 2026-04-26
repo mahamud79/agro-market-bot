@@ -68,7 +68,6 @@ def send_whatsapp_message(phone_number, message_text):
     }
     requests.post(url, headers=headers, json=payload)
 
-# NEW: Custom function to send product images with text options
 def send_whatsapp_image(phone_number, image_id, caption_text):
     url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
@@ -101,9 +100,7 @@ def send_main_menu(phone_number, role, lang="english"):
     }
     send_whatsapp_message(phone_number, menus.get(role, "Menu unavailable."))
 
-
 # --- DATABASE FUNCTIONS ---
-
 def get_user_profile(phone_number):
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -482,11 +479,9 @@ def get_dashboard_stats():
     except:
         return {"total_users": 0, "active_orders": 0, "total_deliveries": 0}
 
-
 # ========================================================
 # ADMIN WEB DASHBOARD ROUTES
 # ========================================================
-
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_dashboard():
     pending_users = get_pending_verifications()
@@ -625,11 +620,9 @@ async def admin_delete_price(price_id: int):
     delete_market_price(price_id)
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
-
 # ========================================================
 # MAIN WEBHOOK - ALL FEATURES + TEXT NAVIGATION
 # ========================================================
-
 @app.post("/webhook")
 async def receive_message(request: Request):
     body = await request.json()
@@ -648,44 +641,49 @@ async def receive_message(request: Request):
             if msg_type in ["audio", "voice"]:
                 send_whatsapp_message(sender_phone, "🎙️ *Voice Note Processing...*\n_Simulated AI Translation:_ 'Menu'")
                 if not profile:
+                    create_user_with_language(sender_phone, "english")
                     update_session(sender_phone, "onboarding", "awaiting_language")
                     send_language_menu(sender_phone)
                 elif profile.get("step") == "registered":
                     update_session(sender_phone, "main_menu", "idle")
                     send_main_menu(sender_phone, profile["role"], profile["language"])
+                elif profile.get("language") and not profile.get("role"):
+                    update_session(sender_phone, "onboarding", "awaiting_role")
+                    send_role_menu(sender_phone, profile["language"])
                 else:
                     send_whatsapp_message(sender_phone, "Please continue your registration.")
                 return {"status": "ok"}
             
             # --- 📍 LOCATION PINS ---
-            if msg_type == "location" and profile and profile["step"] == "awaiting_location":
-                lat = message_data["location"]["latitude"]
-                long = message_data["location"]["longitude"]
-                address = message_data["location"].get("name", f"Location: {lat}, {long}")
-                if update_user_location_and_finish(sender_phone, address):
-                    send_whatsapp_message(sender_phone, f"📍 Location Saved: {address}\n\nRegistration Complete! 🎉 Type *'menu'* to start.")
+            elif msg_type == "location":
+                if profile and profile.get("step") == "awaiting_location":
+                    lat = message_data["location"]["latitude"]
+                    long = message_data["location"]["longitude"]
+                    address = message_data["location"].get("name", f"Location: {lat}, {long}")
+                    if update_user_location_and_finish(sender_phone, address):
+                        send_whatsapp_message(sender_phone, f"📍 Location Saved: {address}\n\nRegistration Complete! 🎉 Type *'menu'* to start.")
                 return {"status": "ok"}
             
             # --- 📸 IMAGE UPLOADS ---
-            if msg_type == "image" and profile and profile["step"] == "awaiting_produce_image":
-                image_id = message_data["image"]["id"]
-                category = 'input' if profile["flow"] == "add_input" else 'produce'
-                save_new_product(sender_phone, image_id, category=category)
-                update_session(sender_phone, "main_menu", "idle")
-                send_whatsapp_message(sender_phone, "Listing Complete! 🎉 Your item is now live. Type 'menu' to see your dashboard.")
+            elif msg_type == "image":
+                if profile and profile.get("step") == "awaiting_produce_image":
+                    image_id = message_data["image"]["id"]
+                    category = 'input' if profile["flow"] == "add_input" else 'produce'
+                    save_new_product(sender_phone, image_id, category=category)
+                    update_session(sender_phone, "main_menu", "idle")
+                    send_whatsapp_message(sender_phone, "Listing Complete! 🎉 Your item is now live. Type 'menu' to see your dashboard.")
                 return {"status": "ok"}
 
             # --- 💬 TEXT AND NUMBER REPLIES ---
-            if msg_type == "text":
+            elif msg_type == "text":
                 text = message_data["text"]["body"].strip().lower()
                 
                 # 1. RESET / MENU COMMAND
-                if msg_type in ["audio", "voice"]:
-                send_whatsapp_message(sender_phone, "🎙️ *Voice Note Processing...*\n_Simulated AI Translation:_ 'Menu'")
-                if not profile:
-                    create_user_with_language(sender_phone, "english")
-                    update_session(sender_phone, "onboarding", "awaiting_language")
-                    send_language_menu(sender_phone)
+                if text in ["hi", "hello", "menu"]:
+                    if not profile:
+                        create_user_with_language(sender_phone, "english")
+                        update_session(sender_phone, "onboarding", "awaiting_language")
+                        send_language_menu(sender_phone)
                     elif profile.get("step") == "registered":
                         update_session(sender_phone, "main_menu", "idle")
                         send_main_menu(sender_phone, profile["role"], profile["language"])
