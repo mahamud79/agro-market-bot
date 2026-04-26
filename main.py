@@ -680,10 +680,12 @@ async def receive_message(request: Request):
                 text = message_data["text"]["body"].strip().lower()
                 
                 # 1. RESET / MENU COMMAND
-                if text in ["hi", "hello", "menu"]:
-                    if not profile:
-                        update_session(sender_phone, "onboarding", "awaiting_language")
-                        send_language_menu(sender_phone)
+                if msg_type in ["audio", "voice"]:
+                send_whatsapp_message(sender_phone, "🎙️ *Voice Note Processing...*\n_Simulated AI Translation:_ 'Menu'")
+                if not profile:
+                    create_user_with_language(sender_phone, "english")
+                    update_session(sender_phone, "onboarding", "awaiting_language")
+                    send_language_menu(sender_phone)
                     elif profile.get("step") == "registered":
                         update_session(sender_phone, "main_menu", "idle")
                         send_main_menu(sender_phone, profile["role"], profile["language"])
