@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, Form
 from fastapi.responses import HTMLResponse
 import os
 import json
@@ -38,8 +38,25 @@ async def verify_webhook(request: Request):
         return Response(content=challenge, media_type="text/plain")
     return Response(status_code=403)
 
-# --- COMMUNICATION FUNCTIONS ---
+# --- TEXT-BASED DICTIONARY ---
+LANGUAGES = {
+    "english": {
+        "welcome": "Welcome to Agro Market 🌱\n\nTo get started, please tell us how you want to use the platform:\n\n1️⃣ Farmer (Seller)\n2️⃣ Buyer\n3️⃣ Input Seller\n4️⃣ Driver / Rider\n\n_Reply with the number (e.g., 1)_",
+        "farmer_menu": "🌾 *Farmer Dashboard*\nWhat would you like to do today?\n\n1️⃣ Add Produce\n2️⃣ My Inventory\n3️⃣ View Orders\n4️⃣ Buy Supplies\n5️⃣ Market Prices\n\n_Reply with a number_",
+        "buyer_menu": "🛒 *Buyer Dashboard*\nWhat would you like to do today?\n\n1️⃣ Search Produce\n2️⃣ My Orders\n3️⃣ Market Prices\n\n_Reply with a number_",
+        "input_menu": "🌱 *Input Seller Dashboard*\nWhat would you like to do today?\n\n1️⃣ Add Supply\n2️⃣ My Inventory\n3️⃣ View Orders\n4️⃣ Market Prices\n\n_Reply with a number_",
+        "driver_menu": "🚚 *Driver Dashboard*\nWhat would you like to do today?\n\n1️⃣ Find Deliveries\n2️⃣ My Deliveries\n\n_Reply with a number_"
+    },
+    "krio": {
+        "welcome": "Wɛlkɔm to Agro Makit 🌱\n\nFɔ stat, tɛl wi aw yu want fɔ yuz dis platfɔm:\n\n1️⃣ Fama (Sɛla)\n2️⃣ Baya\n3️⃣ Inpuyt Sɛla\n4️⃣ Drayva / Rayda\n\n_Reply with the number (e.g., 1)_",
+        "farmer_menu": "🌾 *Fama Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Add Produce\n2️⃣ My Inventory\n3️⃣ View Orders\n4️⃣ Buy Supplies\n5️⃣ Market Prices\n\n_Reply with a number_",
+        "buyer_menu": "🛒 *Baya Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Search Produce\n2️⃣ My Orders\n3️⃣ Market Prices\n\n_Reply with a number_",
+        "input_menu": "🌱 *Input Seller Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Add Supply\n2️⃣ My Inventory\n3️⃣ View Orders\n4️⃣ Market Prices\n\n_Reply with a number_",
+        "driver_menu": "🚚 *Driver Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Find Deliveries\n2️⃣ My Deliveries\n\n_Reply with a number_"
+    }
+}
 
+# --- COMMUNICATION WRAPPERS ---
 def send_whatsapp_message(phone_number, message_text):
     url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
@@ -51,249 +68,52 @@ def send_whatsapp_message(phone_number, message_text):
     }
     requests.post(url, headers=headers, json=payload)
 
-def send_role_menu(phone_number):
+# NEW: Custom function to send product images with text options
+def send_whatsapp_image(phone_number, image_id, caption_text):
     url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-    payload = {
-        "messaging_product": "whatsapp", "to": phone_number, "type": "interactive",
-        "interactive": {
-            "type": "list", "header": {"type": "text", "text": "Welcome to Agro Market 🌱"},
-            "body": {"text": "To get started, please tell us how you want to use the platform."},
-            "action": {
-                "button": "Choose Role",
-                "sections": [{"title": "Select Profile", "rows": [
-                    {"id": "role_farmer", "title": "🌾 Farmer (Seller)", "description": "Sell your produce"},
-                    {"id": "role_buyer", "title": "🛒 Buyer", "description": "Buy fresh produce"},
-                    {"id": "role_input", "title": "🌱 Input Seller", "description": "Sell seeds & tools"},
-                    {"id": "role_driver", "title": "🚚 Driver / Rider", "description": "Deliver orders"}
-                ]}]
-            }
-        }
-    }
-    requests.post(url, headers=headers, json=payload)
-
-def send_main_menu(phone_number, role):
-    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
-    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-    
-    sections = []
-    if role == "role_farmer":
-        sections = [{"title": "Farmer Dashboard", "rows": [
-            {"id": "action_add_produce", "title": "Add Produce", "description": "➕ List new crops for sale"},
-            {"id": "action_view_inventory", "title": "My Inventory", "description": "📦 See your active listings"},
-            {"id": "action_view_orders", "title": "View Orders", "description": "📋 Check buyer requests"},
-            {"id": "action_search_inputs", "title": "Buy Supplies", "description": "🚜 Find seeds, tools & fertilizer"}
-        ]}]
-    elif role == "role_buyer":
-        sections = [{"title": "Buyer Dashboard", "rows": [
-            {"id": "action_search_produce", "title": "Search Produce", "description": "🔍 Find crops near you"},
-            {"id": "action_my_purchases", "title": "My Orders", "description": "🛒 Track your purchases"}
-        ]}]
-    elif role == "role_driver":
-        sections = [{"title": "Driver Dashboard", "rows": [
-            {"id": "action_find_deliveries", "title": "Find Deliveries", "description": "🚚 View ready orders near you"},
-            {"id": "action_my_deliveries", "title": "My Deliveries", "description": "📦 Track your active jobs"}
-        ]}]
-    elif role == "role_input":
-        sections = [{"title": "Input Seller Dashboard", "rows": [
-            {"id": "action_add_input", "title": "Add Supply", "description": "➕ List seeds, tools, etc."},
-            {"id": "action_view_inventory", "title": "My Inventory", "description": "📦 See your active listings"},
-            {"id": "action_view_orders", "title": "View Orders", "description": "📋 Check farmer requests"}
-        ]}]
-    else:
-        sections = [{"title": "Main Dashboard", "rows": [{"id": "action_coming_soon", "title": "Coming Soon", "description": "🚧 Under construction"}]}]
-
-    payload = {
-        "messaging_product": "whatsapp", "to": phone_number, "type": "interactive",
-        "interactive": {
-            "type": "list", "header": {"type": "text", "text": "Agro Market Dashboard 📱"},
-            "body": {"text": "What would you like to do today?"},
-            "action": {"button": "Open Menu", "sections": sections}
-        }
-    }
-    requests.post(url, headers=headers, json=payload)
-
-def send_search_results_menu(phone_number, query, search_results, is_input=False):
-    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
-    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-    rows = []
-    for item in search_results:
-        p_id, p_name, price, quantity, image_id, f_phone, f_name, loc = item
-        qty_text = quantity if quantity else "Unknown"
-        rows.append({"id": f"viewitem_{p_id}", "title": p_name[:24], "description": f"{price} | {qty_text} available | 📍 {loc}"[:72]})
-
-    header_text = f"Search: '{query}' 🚜" if is_input else f"Search: '{query}' 🔍"
-    payload = {
-        "messaging_product": "whatsapp", "to": phone_number, "type": "interactive",
-        "interactive": {
-            "type": "list", "header": {"type": "text", "text": header_text},
-            "body": {"text": "Here is what we found nearby. Tap an item to view details & photos!"},
-            "action": {"button": "View Items", "sections": [{"title": "Available Items", "rows": rows}]}
-        }
-    }
-    requests.post(url, headers=headers, json=payload)
-
-def send_product_details_with_image(phone_number, p_id, p_name, price, quantity, f_name, loc, image_id):
-    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
-    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-    qty_text = quantity if quantity else "Unknown"
-    
     payload = {
         "messaging_product": "whatsapp",
         "to": phone_number,
-        "type": "interactive",
-        "interactive": {
-            "type": "button",
-            "header": {"type": "image", "image": {"id": image_id}},
-            "body": {"text": f"📦 *{p_name}*\n💰 Price: {price}\n⚖️ Available: {qty_text}\n🧑‍🌾 Seller: {f_name} ({loc})\n\nWould you like to order this?"},
-            "action": {
-                "buttons": [
-                    {"type": "reply", "reply": {"id": f"order_{p_id}", "title": "🛒 Buy Now"}},
-                    {"type": "reply", "reply": {"id": "action_search_produce", "title": "🔍 Search Again"}}
-                ]
-            }
+        "type": "image",
+        "image": {
+            "id": image_id,
+            "caption": caption_text
         }
     }
     requests.post(url, headers=headers, json=payload)
 
-def send_delivery_preference_buttons(phone_number, product_id, product_name):
-    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
-    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-    payload = {
-        "messaging_product": "whatsapp", "to": phone_number, "type": "interactive",
-        "interactive": {
-            "type": "button",
-            "body": {"text": f"📦 Almost done!\n\nYou are ordering: *{product_name}*\n\nHow would you like to receive this?"},
-            "action": {
-                "buttons": [
-                    {"type": "reply", "reply": {"id": f"delivery_{product_id}", "title": "🚚 Need Delivery"}},
-                    {"type": "reply", "reply": {"id": f"pickup_{product_id}", "title": "🚶 Self Pickup"}}
-                ]
-            }
-        }
+def send_language_menu(phone_number):
+    msg = "🌍 Welcome to Agro Market! / Wɛlkɔm to Agro Makit!\n\nPlease select your preferred language:\n\n1️⃣ English\n2️⃣ Krio\n\n_Reply with 1 or 2_"
+    send_whatsapp_message(phone_number, msg)
+
+def send_role_menu(phone_number, lang="english"):
+    t = LANGUAGES.get(lang, LANGUAGES["english"])
+    send_whatsapp_message(phone_number, t["welcome"])
+
+def send_main_menu(phone_number, role, lang="english"):
+    t = LANGUAGES.get(lang, LANGUAGES["english"])
+    menus = {
+        "role_farmer": t["farmer_menu"],
+        "role_buyer": t["buyer_menu"],
+        "role_driver": t["driver_menu"],
+        "role_input": t["input_menu"]
     }
-    requests.post(url, headers=headers, json=payload)
+    send_whatsapp_message(phone_number, menus.get(role, "Menu unavailable."))
 
-def send_pending_orders_menu(phone_number, pending_orders):
-    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
-    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-    rows = []
-    for order in pending_orders:
-        o_id, p_name, b_name, b_phone, b_loc, pref = order
-        pref_text = "🚚 Delivery" if pref == "delivery" else "🚶 Pickup"
-        rows.append({"id": f"manage_{o_id}", "title": f"Order #{o_id}", "description": f"{p_name} for {b_name} | {pref_text}"[:72]})
-
-    payload = {
-        "messaging_product": "whatsapp", "to": phone_number, "type": "interactive",
-        "interactive": {
-            "type": "list", "header": {"type": "text", "text": "Pending Orders 📋"},
-            "body": {"text": "Select an order to Accept or Decline."},
-            "action": {"button": "View Orders", "sections": [{"title": "Action Required", "rows": rows}]}
-        }
-    }
-    requests.post(url, headers=headers, json=payload)
-
-def send_order_action_buttons(phone_number, order_id, product_name, buyer_name, preference):
-    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
-    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-    pref_text = "Delivery Needed 🚚" if preference == "delivery" else "Buyer will Pickup 🚶"
-    payload = {
-        "messaging_product": "whatsapp", "to": phone_number, "type": "interactive",
-        "interactive": {
-            "type": "button",
-            "body": {"text": f"📦 *Manage Order #{order_id}*\n\nItem: {product_name}\nBuyer: {buyer_name}\nMethod: *{pref_text}*\n\nWhat would you like to do?"},
-            "action": {
-                "buttons": [
-                    {"type": "reply", "reply": {"id": f"accept_{order_id}", "title": "✅ Accept"}},
-                    {"type": "reply", "reply": {"id": f"decline_{order_id}", "title": "❌ Decline"}}
-                ]
-            }
-        }
-    }
-    requests.post(url, headers=headers, json=payload)
-
-def send_available_deliveries_menu(phone_number, deliveries):
-    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
-    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-    rows = []
-    for d in deliveries:
-        o_id, p_name, f_name, f_loc, b_name, b_loc = d
-        rows.append({"id": f"deliv_{o_id}", "title": f"Job #{o_id}: {p_name}"[:24], "description": f"From: {f_loc} To: {b_loc}"[:72]})
-
-    payload = {
-        "messaging_product": "whatsapp", "to": phone_number, "type": "interactive",
-        "interactive": {
-            "type": "list", "header": {"type": "text", "text": "Available Deliveries 🚚"},
-            "body": {"text": "Select a delivery job to view details and accept it."},
-            "action": {"button": "View Jobs", "sections": [{"title": "Ready for Pickup", "rows": rows}]}
-        }
-    }
-    requests.post(url, headers=headers, json=payload)
-
-def send_delivery_action_buttons(phone_number, order_id, product_name, f_name, f_loc, b_name, b_loc):
-    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
-    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-    payload = {
-        "messaging_product": "whatsapp", "to": phone_number, "type": "interactive",
-        "interactive": {
-            "type": "button",
-            "body": {"text": f"🚚 *Delivery Job #{order_id}*\n\n📦 Item: {product_name}\n📍 Pickup: {f_name} ({f_loc})\n🎯 Dropoff: {b_name} ({b_loc})\n\nDo you want to accept this delivery?"},
-            "action": {
-                "buttons": [
-                    {"type": "reply", "reply": {"id": f"acceptdeliv_{order_id}", "title": "✅ Accept Job"}}
-                ]
-            }
-        }
-    }
-    requests.post(url, headers=headers, json=payload)
-
-def send_my_deliveries_menu(phone_number, deliveries):
-    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
-    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-    rows = []
-    for d in deliveries:
-        o_id, p_name, f_name, f_loc, f_phone, b_name, b_loc, b_phone = d
-        rows.append({"id": f"managejob_{o_id}", "title": f"Job #{o_id}"[:24], "description": f"Deliver to: {b_loc}"[:72]})
-
-    payload = {
-        "messaging_product": "whatsapp", "to": phone_number, "type": "interactive",
-        "interactive": {
-            "type": "list", "header": {"type": "text", "text": "My Active Deliveries 🚚"},
-            "body": {"text": "Select a job to view details or mark it as delivered."},
-            "action": {"button": "View Active Jobs", "sections": [{"title": "In Transit", "rows": rows}]}
-        }
-    }
-    requests.post(url, headers=headers, json=payload)
-
-def send_job_completion_buttons(phone_number, order_id, product_name, b_name, f_phone, b_phone):
-    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
-    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-    payload = {
-        "messaging_product": "whatsapp", "to": phone_number, "type": "interactive",
-        "interactive": {
-            "type": "button",
-            "body": {"text": f"🚚 *Job #{order_id} In Progress*\n\n📦 Item: {product_name}\n🎯 Dropoff: {b_name}\n\n📞 Pickup: wa.me/{f_phone}\n📞 Dropoff: wa.me/{b_phone}\n\nDid you successfully deliver this order?"},
-            "action": {
-                "buttons": [
-                    {"type": "reply", "reply": {"id": f"delivered_{order_id}", "title": "✅ Mark Delivered"}}
-                ]
-            }
-        }
-    }
-    requests.post(url, headers=headers, json=payload)
 
 # --- DATABASE FUNCTIONS ---
 
-# UPDATED: We now fetch the nin_status from the database
 def get_user_profile(phone_number):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        cursor.execute("SELECT us.current_flow, us.current_step, u.role, u.nin_status FROM user_sessions us LEFT JOIN users u ON us.phone = u.phone WHERE us.phone = %s", (phone_number,))
+        cursor.execute("SELECT u.role, u.nin_status, u.language, us.current_flow, us.current_step FROM users u LEFT JOIN user_sessions us ON u.phone = us.phone WHERE u.phone = %s", (phone_number,))
         result = cursor.fetchone()
         cursor.close()
         conn.close()
-        return {"flow": result[0], "step": result[1], "role": result[2], "nin_status": result[3]} if result else None
+        if result: return {"role": result[0], "nin_status": result[1], "language": result[2] or "english", "flow": result[3], "step": result[4]}
+        return None
     except: return None
 
 def get_user_location(phone_number):
@@ -311,11 +131,11 @@ def update_session(phone_number, flow, step):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        cursor.execute("UPDATE user_sessions SET current_flow = %s, current_step = %s WHERE phone = %s", (flow, step, phone_number))
+        cursor.execute("INSERT INTO user_sessions (phone, current_flow, current_step) VALUES (%s, %s, %s) ON CONFLICT (phone) DO UPDATE SET current_flow = EXCLUDED.current_flow, current_step = EXCLUDED.current_step;", (phone_number, flow, step))
         conn.commit()
         cursor.close()
         conn.close()
-    except: pass
+    except Exception as e: print(f"DB Error session: {e}")
 
 def update_session_data(phone_number, new_data_dict):
     try:
@@ -330,6 +150,17 @@ def update_session_data(phone_number, new_data_dict):
         cursor.close()
         conn.close()
     except: pass
+
+def get_session_data(phone_number):
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("SELECT temp_data FROM user_sessions WHERE phone = %s", (phone_number,))
+        result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        return result[0] if result and result[0] else {}
+    except: return {}
 
 def save_new_product(phone_number, image_id, category='produce'):
     try:
@@ -366,18 +197,12 @@ def search_marketplace(query, category='produce', buyer_location=""):
         cursor = conn.cursor()
         search_term = f"%{query}%"
         loc_term = f"%{buyer_location}%"
-        
         cursor.execute("""
             SELECT p.id, p.product_name, p.price, p.quantity, p.image_id, p.farmer_phone, u.name, u.location
-            FROM products p
-            JOIN users u ON p.farmer_phone = u.phone
+            FROM products p JOIN users u ON p.farmer_phone = u.phone
             WHERE p.product_name ILIKE %s AND p.category = %s
-            ORDER BY 
-                (u.location ILIKE %s) DESC, 
-                p.created_at DESC 
-            LIMIT 5
+            ORDER BY (u.location ILIKE %s) DESC, p.created_at DESC LIMIT 5
         """, (search_term, category, loc_term))
-        
         results = cursor.fetchall()
         cursor.close()
         conn.close()
@@ -388,19 +213,14 @@ def get_product_by_id(product_id):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT p.id, p.product_name, p.price, p.quantity, p.image_id, p.farmer_phone, u.name, u.location
-            FROM products p
-            JOIN users u ON p.farmer_phone = u.phone
-            WHERE p.id = %s
-        """, (product_id,))
+        cursor.execute("SELECT p.id, p.product_name, p.price, p.quantity, p.image_id, p.farmer_phone, u.name, u.location FROM products p JOIN users u ON p.farmer_phone = u.phone WHERE p.id = %s", (product_id,))
         result = cursor.fetchone()
         cursor.close()
         conn.close()
         return result
     except: return None
 
-def create_order(buyer_phone, product_id, preference):
+def create_order(buyer_phone, product_id, preference, payment_method):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
@@ -408,7 +228,7 @@ def create_order(buyer_phone, product_id, preference):
         prod = cursor.fetchone()
         if not prod: return None
         prod_name, farmer_phone, price = prod
-        cursor.execute("INSERT INTO orders (buyer_phone, farmer_phone, product_id, product_name, status, delivery_preference) VALUES (%s, %s, %s, %s, 'pending', %s)", (buyer_phone, farmer_phone, product_id, prod_name, preference))
+        cursor.execute("INSERT INTO orders (buyer_phone, farmer_phone, product_id, product_name, status, delivery_preference, payment_method) VALUES (%s, %s, %s, %s, 'pending', %s, %s)", (buyer_phone, farmer_phone, product_id, prod_name, preference, payment_method))
         conn.commit()
         cursor.close()
         conn.close()
@@ -420,11 +240,9 @@ def get_farmer_orders(farmer_phone):
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT o.id, o.product_name, u.name, u.phone, u.location, o.delivery_preference
-            FROM orders o
-            JOIN users u ON o.buyer_phone = u.phone
-            WHERE o.farmer_phone = %s AND o.status = 'pending'
-            ORDER BY o.created_at DESC
+            SELECT o.id, o.product_name, u.name, u.phone, u.location, o.delivery_preference, o.payment_method
+            FROM orders o JOIN users u ON o.buyer_phone = u.phone
+            WHERE o.farmer_phone = %s AND o.status = 'pending' ORDER BY o.created_at DESC
         """, (farmer_phone,))
         results = cursor.fetchall()
         cursor.close()
@@ -436,13 +254,7 @@ def get_buyer_orders(buyer_phone):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT o.id, o.product_name, o.status, u.name, u.phone
-            FROM orders o
-            JOIN users u ON o.farmer_phone = u.phone
-            WHERE o.buyer_phone = %s
-            ORDER BY o.created_at DESC
-        """, (buyer_phone,))
+        cursor.execute("SELECT o.id, o.product_name, o.status, u.name, u.phone FROM orders o JOIN users u ON o.farmer_phone = u.phone WHERE o.buyer_phone = %s ORDER BY o.created_at DESC", (buyer_phone,))
         results = cursor.fetchall()
         cursor.close()
         conn.close()
@@ -453,12 +265,7 @@ def get_order_by_id(order_id):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT o.id, o.product_name, o.buyer_phone, u.name, o.status, o.delivery_preference
-            FROM orders o
-            JOIN users u ON o.buyer_phone = u.phone
-            WHERE o.id = %s
-        """, (order_id,))
+        cursor.execute("SELECT o.id, o.product_name, o.buyer_phone, u.name, o.status, o.delivery_preference, o.payment_method FROM orders o JOIN users u ON o.buyer_phone = u.phone WHERE o.id = %s", (order_id,))
         result = cursor.fetchone()
         cursor.close()
         conn.close()
@@ -481,11 +288,8 @@ def get_available_deliveries():
         cursor = conn.cursor()
         cursor.execute("""
             SELECT o.id, o.product_name, f.name AS farmer_name, f.location AS farmer_loc, b.name AS buyer_name, b.location AS buyer_loc
-            FROM orders o
-            JOIN users f ON o.farmer_phone = f.phone
-            JOIN users b ON o.buyer_phone = b.phone
-            WHERE o.status = 'ACCEPTED' AND o.delivery_preference = 'delivery'
-            ORDER BY o.created_at DESC LIMIT 5
+            FROM orders o JOIN users f ON o.farmer_phone = f.phone JOIN users b ON o.buyer_phone = b.phone
+            WHERE o.status = 'ACCEPTED' AND o.delivery_preference = 'delivery' ORDER BY o.created_at DESC LIMIT 5
         """)
         results = cursor.fetchall()
         cursor.close()
@@ -499,10 +303,7 @@ def get_delivery_details(order_id):
         cursor = conn.cursor()
         cursor.execute("""
             SELECT o.id, o.product_name, f.name AS farmer_name, f.location AS farmer_loc, f.phone AS farmer_phone, b.name AS buyer_name, b.location AS buyer_loc, b.phone AS buyer_phone
-            FROM orders o
-            JOIN users f ON o.farmer_phone = f.phone
-            JOIN users b ON o.buyer_phone = b.phone
-            WHERE o.id = %s
+            FROM orders o JOIN users f ON o.farmer_phone = f.phone JOIN users b ON o.buyer_phone = b.phone WHERE o.id = %s
         """, (order_id,))
         result = cursor.fetchone()
         cursor.close()
@@ -527,11 +328,8 @@ def get_driver_deliveries(driver_phone):
         cursor = conn.cursor()
         cursor.execute("""
             SELECT o.id, o.product_name, f.name, f.location, f.phone, b.name, b.location, b.phone
-            FROM orders o
-            JOIN users f ON o.farmer_phone = f.phone
-            JOIN users b ON o.buyer_phone = b.phone
-            WHERE o.driver_phone = %s AND o.status = 'IN_TRANSIT'
-            ORDER BY o.created_at DESC
+            FROM orders o JOIN users f ON o.farmer_phone = f.phone JOIN users b ON o.buyer_phone = b.phone
+            WHERE o.driver_phone = %s AND o.status = 'IN_TRANSIT' ORDER BY o.created_at DESC
         """, (driver_phone,))
         results = cursor.fetchall()
         cursor.close()
@@ -539,11 +337,22 @@ def get_driver_deliveries(driver_phone):
         return results
     except: return []
 
+def create_user_with_language(phone_number, lang):
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO users (phone, language) VALUES (%s, %s) ON CONFLICT (phone) DO UPDATE SET language = EXCLUDED.language;", (phone_number, lang))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
+    except: return False
+
 def update_user_role_and_step(phone_number, role_id):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO users (phone, role) VALUES (%s, %s) ON CONFLICT (phone) DO UPDATE SET role = EXCLUDED.role;", (phone_number, role_id))
+        cursor.execute("UPDATE users SET role = %s WHERE phone = %s", (role_id, phone_number))
         cursor.execute("INSERT INTO user_sessions (phone, current_flow, current_step) VALUES (%s, 'registration', 'awaiting_name') ON CONFLICT (phone) DO UPDATE SET current_flow = EXCLUDED.current_flow, current_step = EXCLUDED.current_step;", (phone_number,))
         conn.commit()
         cursor.close()
@@ -587,12 +396,46 @@ def update_user_location_and_finish(phone_number, location):
         return True
     except: return False
 
-# NEW: Admin DB Functions
+def get_market_prices(include_id=False):
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        if include_id:
+            cursor.execute("SELECT id, crop_name, location, price FROM market_prices ORDER BY crop_name, location")
+        else:
+            cursor.execute("SELECT crop_name, location, price FROM market_prices ORDER BY crop_name, location")
+        results = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return results
+    except: return []
+
+def add_market_price(crop_name, location, price):
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO market_prices (crop_name, location, price) VALUES (%s, %s, %s)", (crop_name, location, price))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
+    except: return False
+
+def delete_market_price(price_id):
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM market_prices WHERE id = %s", (price_id,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
+    except: return False
+
 def get_pending_verifications():
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        # Buyers don't strictly need NIN verification to buy, so we only flag sellers & drivers
         cursor.execute("SELECT name, phone, role, nin_number FROM users WHERE nin_status = 'pending' AND role != 'role_buyer'")
         results = cursor.fetchall()
         cursor.close()
@@ -611,7 +454,181 @@ def approve_user_nin(phone_number):
         return True
     except: return False
 
-# --- MAIN WEBHOOK ---
+def reject_user_nin(phone_number):
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM users WHERE phone = %s", (phone_number,))
+        cursor.execute("DELETE FROM user_sessions WHERE phone = %s", (phone_number,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
+    except: return False
+
+def get_dashboard_stats():
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM users;")
+        total_users = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM orders WHERE status != 'DELIVERED';")
+        active_orders = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM orders WHERE status = 'DELIVERED';")
+        total_deliveries = cursor.fetchone()[0]
+        cursor.close()
+        conn.close()
+        return {"total_users": total_users, "active_orders": active_orders, "total_deliveries": total_deliveries}
+    except:
+        return {"total_users": 0, "active_orders": 0, "total_deliveries": 0}
+
+
+# ========================================================
+# ADMIN WEB DASHBOARD ROUTES
+# ========================================================
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_dashboard():
+    pending_users = get_pending_verifications()
+    market_prices = get_market_prices(include_id=True)
+    stats = get_dashboard_stats()
+    
+    html_content = f"""
+    <html>
+        <head>
+            <title>Agro Market Admin Panel</title>
+            <style>
+                body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; padding: 40px; }}
+                h1 {{ color: #2E7D32; }}
+                h2 {{ color: #333; margin-top: 40px; border-bottom: 2px solid #2E7D32; padding-bottom: 10px; }}
+                table {{ width: 100%; border-collapse: collapse; background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.2); margin-bottom: 20px;}}
+                th, td {{ padding: 15px; text-align: left; border-bottom: 1px solid #ddd; }}
+                th {{ background-color: #2E7D32; color: white; }}
+                .btn {{ color: white; border: none; padding: 8px 15px; text-align: center; border-radius: 5px; cursor: pointer; font-weight: bold;}}
+                .btn-approve {{ background-color: #4CAF50; }}
+                .btn-approve:hover {{ background-color: #45a049; }}
+                .btn-reject {{ background-color: #f44336; }}
+                .btn-reject:hover {{ background-color: #da190b; }}
+                .btn-add {{ background-color: #008CBA; padding: 10px 20px;}}
+                .btn-add:hover {{ background-color: #007399; }}
+                .empty {{ color: #555; font-style: italic; }}
+                .action-form {{ display: inline-block; margin: 0; }}
+                .add-form {{ background: white; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.2); border-radius: 5px;}}
+                input[type=text] {{ padding: 10px; margin: 5px 10px 5px 0; border: 1px solid #ccc; border-radius: 4px; width: 25%;}}
+                .stats-container {{ display: flex; gap: 20px; margin-bottom: 40px; }}
+                .stat-card {{ background: white; padding: 25px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); flex: 1; text-align: center; border-top: 5px solid #2E7D32; }}
+                .stat-card h3 {{ margin: 0; color: #555; font-size: 16px; text-transform: uppercase; letter-spacing: 1px; }}
+                .stat-card p {{ margin: 15px 0 0; font-size: 36px; font-weight: bold; color: #2E7D32; }}
+            </style>
+        </head>
+        <body>
+            <h1>🛡️ Agro Market Admin Dashboard</h1>
+            <div class="stats-container">
+                <div class="stat-card">
+                    <h3>👥 Total Users</h3><p>{stats['total_users']}</p>
+                </div>
+                <div class="stat-card">
+                    <h3>🛒 Active Orders</h3><p>{stats['active_orders']}</p>
+                </div>
+                <div class="stat-card">
+                    <h3>✅ Total Deliveries</h3><p>{stats['total_deliveries']}</p>
+                </div>
+            </div>
+            <h2>⏳ Pending User Verifications</h2>
+            <table>
+                <tr>
+                    <th>Full Name</th><th>Phone Number</th><th>Requested Role</th><th>NIN Number</th><th>Action</th>
+                </tr>
+    """
+    
+    if not pending_users:
+        html_content += "<tr><td colspan='5' class='empty'>No pending verifications at this time.</td></tr>"
+    else:
+        for u in pending_users:
+            name, phone, role, nin = u
+            display_role = role.replace("role_", "").capitalize()
+            html_content += f"""
+                <tr>
+                    <td>{name}</td><td>{phone}</td><td>{display_role}</td><td><b>{nin}</b></td>
+                    <td>
+                        <form action="/admin/verify/{phone}" method="post" class="action-form">
+                            <button type="submit" class="btn btn-approve">✅ Approve</button>
+                        </form>
+                        <form action="/admin/reject/{phone}" method="post" class="action-form" onsubmit="return confirm('Are you sure you want to completely reject and delete this user?');">
+                            <button type="submit" class="btn btn-reject">❌ Reject</button>
+                        </form>
+                    </td>
+                </tr>
+            """
+            
+    html_content += """
+            </table>
+            <h2>📈 Daily Market Price Management</h2>
+            <table>
+                <tr>
+                    <th>Crop / Item Name</th><th>Location</th><th>Current Price</th><th>Action</th>
+                </tr>
+    """
+    
+    if not market_prices:
+        html_content += "<tr><td colspan='4' class='empty'>No market prices currently set.</td></tr>"
+    else:
+        for p in market_prices:
+            p_id, crop, loc, price = p
+            html_content += f"""
+                <tr>
+                    <td>{crop}</td><td>{loc}</td><td><b>{price}</b></td>
+                    <td>
+                        <form action="/admin/price/delete/{p_id}" method="post" class="action-form">
+                            <button type="submit" class="btn btn-reject">🗑️ Remove</button>
+                        </form>
+                    </td>
+                </tr>
+            """
+            
+    html_content += """
+            </table>
+            <div class="add-form">
+                <h3>➕ Add New Market Price</h3>
+                <form action="/admin/price/add" method="post">
+                    <input type="text" name="crop_name" placeholder="e.g., Cassava" required>
+                    <input type="text" name="location" placeholder="e.g., Makeni" required>
+                    <input type="text" name="price" placeholder="e.g., Le 500" required>
+                    <button type="submit" class="btn btn-add">Add Price to Dashboard</button>
+                </form>
+            </div>
+        </body>
+    </html>
+    """
+    return html_content
+
+@app.post("/admin/verify/{phone}")
+async def verify_user(phone: str):
+    if approve_user_nin(phone):
+        send_whatsapp_message(phone, "🎉 *Identity Verified!*\n\nYour NIN has been successfully reviewed by our admin team. You are now a trusted and verified member of Agro Market.\n\nType *'menu'* to access your full dashboard.")
+    return HTMLResponse("<script>alert('User Successfully Verified! They have been notified via WhatsApp.'); window.location.href='/admin';</script>")
+
+@app.post("/admin/reject/{phone}")
+async def reject_user(phone: str):
+    if reject_user_nin(phone):
+        send_whatsapp_message(phone, "❌ *Identity Verification Failed*\n\nUnfortunately, we were unable to verify your National Identification Number (NIN). Your registration has been rejected. Please type 'Hi' to register again with a valid NIN.")
+    return HTMLResponse("<script>alert('User Rejected and Deleted.'); window.location.href='/admin';</script>")
+
+@app.post("/admin/price/add")
+async def admin_add_price(request: Request):
+    form_data = await request.form()
+    add_market_price(form_data.get("crop_name"), form_data.get("location"), form_data.get("price"))
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
+
+@app.post("/admin/price/delete/{price_id}")
+async def admin_delete_price(price_id: int):
+    delete_market_price(price_id)
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
+
+
+# ========================================================
+# MAIN WEBHOOK - ALL FEATURES + TEXT NAVIGATION
+# ========================================================
 
 @app.post("/webhook")
 async def receive_message(request: Request):
@@ -627,316 +644,420 @@ async def receive_message(request: Request):
             msg_type = message_data.get("type")
             profile = get_user_profile(sender_phone)
             
-            # 1. INTERACTIVE ACTIONS
-            if msg_type == "interactive":
-                interactive_type = message_data["interactive"]["type"]
+            # --- 🎙️ VOICE NOTES (SIMULATED FOR DEMO) ---
+            if msg_type in ["audio", "voice"]:
+                send_whatsapp_message(sender_phone, "🎙️ *Voice Note Processing...*\n_Simulated AI Translation:_ 'Menu'")
+                if not profile:
+                    update_session(sender_phone, "onboarding", "awaiting_language")
+                    send_language_menu(sender_phone)
+                elif profile.get("step") == "registered":
+                    update_session(sender_phone, "main_menu", "idle")
+                    send_main_menu(sender_phone, profile["role"], profile["language"])
+                else:
+                    send_whatsapp_message(sender_phone, "Please continue your registration.")
+                return {"status": "ok"}
+            
+            # --- 📍 LOCATION PINS ---
+            if msg_type == "location" and profile and profile["step"] == "awaiting_location":
+                lat = message_data["location"]["latitude"]
+                long = message_data["location"]["longitude"]
+                address = message_data["location"].get("name", f"Location: {lat}, {long}")
+                if update_user_location_and_finish(sender_phone, address):
+                    send_whatsapp_message(sender_phone, f"📍 Location Saved: {address}\n\nRegistration Complete! 🎉 Type *'menu'* to start.")
+                return {"status": "ok"}
+            
+            # --- 📸 IMAGE UPLOADS ---
+            if msg_type == "image" and profile and profile["step"] == "awaiting_produce_image":
+                image_id = message_data["image"]["id"]
+                category = 'input' if profile["flow"] == "add_input" else 'produce'
+                save_new_product(sender_phone, image_id, category=category)
+                update_session(sender_phone, "main_menu", "idle")
+                send_whatsapp_message(sender_phone, "Listing Complete! 🎉 Your item is now live. Type 'menu' to see your dashboard.")
+                return {"status": "ok"}
+
+            # --- 💬 TEXT AND NUMBER REPLIES ---
+            if msg_type == "text":
+                text = message_data["text"]["body"].strip().lower()
                 
-                if interactive_type == "list_reply":
-                    selected_id = message_data["interactive"]["list_reply"]["id"]
-                    
-                    if selected_id.startswith("role_"):
-                        if update_user_role_and_step(sender_phone, selected_id):
-                            send_whatsapp_message(sender_phone, f"Awesome! Profile started. Please type your *Full Name*.")
+                # 1. RESET / MENU COMMAND
+                if text in ["hi", "hello", "menu"]:
+                    if not profile:
+                        update_session(sender_phone, "onboarding", "awaiting_language")
+                        send_language_menu(sender_phone)
+                    elif profile.get("step") == "registered":
+                        update_session(sender_phone, "main_menu", "idle")
+                        send_main_menu(sender_phone, profile["role"], profile["language"])
+                    elif profile.get("language") and not profile.get("role"):
+                        update_session(sender_phone, "onboarding", "awaiting_role")
+                        send_role_menu(sender_phone, profile["language"])
+                    else: 
+                        send_whatsapp_message(sender_phone, "Please continue your registration.")
+                    return {"status": "ok"}
+
+                if not profile: return {"status": "ok"}
+                flow = profile.get("flow")
+                step = profile.get("step")
+
+                # --- ONBOARDING FLOW ---
+                if flow == "onboarding":
+                    if step == "awaiting_language":
+                        if text == "1": lang = "english"
+                        elif text == "2": lang = "krio"
+                        else:
+                            send_whatsapp_message(sender_phone, "Invalid. Reply 1 for English or 2 for Krio.")
                             return {"status": "ok"}
-                    
-                    # NEW: THE GATEKEEPER! 🛑
-                    # If they try to sell or drive, we check their NIN status first!
-                    restricted_actions = ["action_add_produce", "action_add_input", "action_find_deliveries"]
-                    if selected_id in restricted_actions and profile and profile.get("nin_status") == "pending":
-                        send_whatsapp_message(sender_phone, "⏳ *Account Pending Verification*\n\nYour NIN is currently under review by our admin team to ensure marketplace safety. You will be notified once verified and granted full access to sell or deliver!")
-                        return {"status": "ok"}
+                        create_user_with_language(sender_phone, lang)
+                        update_session(sender_phone, "onboarding", "awaiting_role")
+                        send_role_menu(sender_phone, lang)
+                        
+                    elif step == "awaiting_role":
+                        roles = {"1": "role_farmer", "2": "role_buyer", "3": "role_input", "4": "role_driver"}
+                        if text in roles:
+                            update_user_role_and_step(sender_phone, roles[text])
+                            send_whatsapp_message(sender_phone, "Awesome! Please type your *Full Name*.")
+                        else: 
+                            send_whatsapp_message(sender_phone, "Invalid. Please reply with 1, 2, 3, or 4.")
 
-                    elif selected_id == "action_add_produce":
-                        update_session(sender_phone, "add_produce", "awaiting_produce_name")
-                        send_whatsapp_message(sender_phone, "Great! 🌾 What is the name of the produce you are selling?")
-                    
-                    elif selected_id == "action_add_input":
-                        update_session(sender_phone, "add_input", "awaiting_produce_name")
-                        send_whatsapp_message(sender_phone, "Great! 🚜 What is the name of the supply/tool you are selling?")
+                # --- REGISTRATION FLOW ---
+                elif flow == "registration":
+                    if step == "awaiting_name":
+                        update_user_name_and_step(sender_phone, text)
+                        send_whatsapp_message(sender_phone, "Thanks! Now please enter your *NIN*.")
+                    elif step == "awaiting_nin":
+                        update_user_nin_and_step(sender_phone, text)
+                        send_whatsapp_message(sender_phone, "NIN Saved. Tell us your *Location* (e.g., Bo, Freetown) or send a location pin 📍.")
+                    elif step == "awaiting_location":
+                        update_user_location_and_finish(sender_phone, text)
+                        send_whatsapp_message(sender_phone, "Registration Complete! 🎉 Type *'menu'* to start.")
 
-                    elif selected_id == "action_view_inventory":
-                        inventory = get_user_inventory(sender_phone)
-                        if not inventory:
-                            send_whatsapp_message(sender_phone, "📦 Your inventory is currently empty. Click 'Add Produce/Supply' to list something!")
-                        else:
-                            msg = "📦 *Your Active Inventory:*\n\n"
-                            for item in inventory:
-                                msg += f"✔️ *{item[0]}*\n💰 {item[1]}\n---\n"
+                # --- ADD PRODUCE / INPUT FLOW ---
+                elif flow in ["add_produce", "add_input"]:
+                    if step == "awaiting_produce_name":
+                        update_session_data(sender_phone, {"produce_name": text})
+                        update_session(sender_phone, flow, "awaiting_produce_price")
+                        send_whatsapp_message(sender_phone, f"Got it: *{text}*. What is the price? (e.g., 500 per unit)")
+                    elif step == "awaiting_produce_price":
+                        update_session_data(sender_phone, {"produce_price": text})
+                        update_session(sender_phone, flow, "awaiting_produce_quantity")
+                        send_whatsapp_message(sender_phone, "Got it. ⚖️ What is the available quantity?")
+                    elif step == "awaiting_produce_quantity":
+                        update_session_data(sender_phone, {"produce_quantity": text})
+                        update_session(sender_phone, flow, "awaiting_produce_image")
+                        send_whatsapp_message(sender_phone, "Perfect. 📸 Finally, **send a photo** of the item!")
+
+                # --- MAIN MENU ROUTING ---
+                elif flow == "main_menu" and step == "idle":
+                    role = profile["role"]
+                    
+                    if role == "role_farmer":
+                        if text == "1":
+                            if profile.get("nin_status") == "pending":
+                                send_whatsapp_message(sender_phone, "⏳ *Account Pending*\nYour NIN is under review. You will be notified once verified to sell!")
+                            else:
+                                update_session(sender_phone, "add_produce", "awaiting_produce_name")
+                                send_whatsapp_message(sender_phone, "Great! 🌾 What is the name of the produce?")
+                        elif text == "2":
+                            inventory = get_user_inventory(sender_phone)
+                            if not inventory: send_whatsapp_message(sender_phone, "📦 Inventory is empty.")
+                            else:
+                                msg = "📦 *Active Inventory:*\n\n"
+                                for item in inventory: msg += f"✔️ {item[0]} - {item[1]}\n"
+                                send_whatsapp_message(sender_phone, msg)
+                        elif text == "3":
+                            orders = get_farmer_orders(sender_phone)
+                            if not orders: send_whatsapp_message(sender_phone, "✅ No pending orders.")
+                            else:
+                                msg = "📋 *Pending Orders:*\n\n"
+                                temp_map = {}
+                                for idx, o in enumerate(orders, 1):
+                                    msg += f"{idx}️⃣ Order #{o[0]} - {o[1]} for {o[2]}\n"
+                                    temp_map[str(idx)] = o[0]
+                                msg += "\n_Reply with a number to manage an order_"
+                                update_session_data(sender_phone, {"manage_map": temp_map})
+                                update_session(sender_phone, "manage_order", "awaiting_selection")
+                                send_whatsapp_message(sender_phone, msg)
+                        elif text == "4":
+                            update_session(sender_phone, "farmer_search", "awaiting_search_query")
+                            send_whatsapp_message(sender_phone, "🚜 What supplies do you need? (e.g., Seeds, Fertilizer)")
+                        elif text == "5":
+                            prices = get_market_prices()
+                            msg = "📊 *Today's Market Prices:*\n\n"
+                            for p in prices: msg += f"🌾 {p[0]} (📍 {p[1]}): {p[2]}\n"
+                            send_whatsapp_message(sender_phone, msg)
+                            
+                    elif role == "role_buyer":
+                        if text == "1":
+                            update_session(sender_phone, "buyer_search", "awaiting_search_query")
+                            send_whatsapp_message(sender_phone, "🔍 What produce are you looking for?")
+                        elif text == "2":
+                            orders = get_buyer_orders(sender_phone)
+                            if not orders: send_whatsapp_message(sender_phone, "🛒 No recent orders.")
+                            else:
+                                msg = "🛒 *Recent Orders:*\n\n"
+                                for o in orders: msg += f"📦 {o[1]} (Status: {o[2].upper()})\n"
+                                send_whatsapp_message(sender_phone, msg)
+                        elif text == "3":
+                            prices = get_market_prices()
+                            msg = "📊 *Today's Market Prices:*\n\n"
+                            for p in prices: msg += f"🌾 {p[0]} (📍 {p[1]}): {p[2]}\n"
                             send_whatsapp_message(sender_phone, msg)
 
-                    elif selected_id == "action_view_orders":
-                        pending_orders = get_farmer_orders(sender_phone)
-                        if not pending_orders:
-                            send_whatsapp_message(sender_phone, "✅ You have no pending orders right now. You're all caught up!")
-                        else:
-                            send_pending_orders_menu(sender_phone, pending_orders)
-                            
-                    elif selected_id.startswith("manage_"):
-                        order_id = selected_id.split("_")[1]
-                        order_details = get_order_by_id(order_id)
-                        if order_details:
-                            o_id, p_name, b_phone, b_name, status, pref = order_details
-                            send_order_action_buttons(sender_phone, o_id, p_name, b_name, pref)
-
-                    elif selected_id == "action_search_produce":
-                        update_session(sender_phone, "buyer_search", "awaiting_search_query")
-                        send_whatsapp_message(sender_phone, "🔍 What produce are you looking for today? (e.g., Rice, Tomatoes)")
-                    
-                    elif selected_id == "action_search_inputs":
-                        update_session(sender_phone, "farmer_search", "awaiting_search_query")
-                        send_whatsapp_message(sender_phone, "🚜 What supplies do you need? (e.g., Tractor, Seeds, Fertilizer)")
-
-                    elif selected_id.startswith("viewitem_"):
-                        product_id = selected_id.split("_")[1]
-                        details = get_product_by_id(product_id)
-                        if details:
-                            p_id, p_name, price, qty, img_id, f_phone, f_name, loc = details
-                            send_product_details_with_image(sender_phone, p_id, p_name, price, qty, f_name, loc, img_id)
-
-                    elif selected_id == "action_my_purchases":
-                        buyer_orders = get_buyer_orders(sender_phone)
-                        if not buyer_orders:
-                            send_whatsapp_message(sender_phone, "🛒 You haven't placed any orders yet. Click 'Search' to find something!")
-                        else:
-                            msg = "🛒 *Your Recent Orders:*\n\n"
-                            for order in buyer_orders:
-                                o_id, p_name, status, f_name, f_phone = order
-                                msg += f"📦 *{p_name}* (Order #{o_id})\n⏳ Status: *{status.upper()}*\n🧑‍🌾 Seller: {f_name}\n📞 Contact: wa.me/{f_phone}\n---\n"
+                    elif role == "role_input":
+                        if text == "1":
+                            if profile.get("nin_status") == "pending":
+                                send_whatsapp_message(sender_phone, "⏳ *Account Pending*\nYour NIN is under review. You will be notified once verified to sell!")
+                            else:
+                                update_session(sender_phone, "add_input", "awaiting_produce_name")
+                                send_whatsapp_message(sender_phone, "Great! 🚜 What is the name of the supply/tool?")
+                        elif text == "2":
+                            inventory = get_user_inventory(sender_phone)
+                            if not inventory: send_whatsapp_message(sender_phone, "📦 Inventory is empty.")
+                            else:
+                                msg = "📦 *Active Inventory:*\n\n"
+                                for item in inventory: msg += f"✔️ {item[0]} - {item[1]}\n"
+                                send_whatsapp_message(sender_phone, msg)
+                        elif text == "3":
+                            orders = get_farmer_orders(sender_phone)
+                            if not orders: send_whatsapp_message(sender_phone, "✅ No pending orders.")
+                            else:
+                                msg = "📋 *Pending Orders:*\n\n"
+                                temp_map = {}
+                                for idx, o in enumerate(orders, 1):
+                                    msg += f"{idx}️⃣ Order #{o[0]} - {o[1]} for {o[2]}\n"
+                                    temp_map[str(idx)] = o[0]
+                                msg += "\n_Reply with a number to manage an order_"
+                                update_session_data(sender_phone, {"manage_map": temp_map})
+                                update_session(sender_phone, "manage_order", "awaiting_selection")
+                                send_whatsapp_message(sender_phone, msg)
+                        elif text == "4":
+                            prices = get_market_prices()
+                            msg = "📊 *Today's Market Prices:*\n\n"
+                            for p in prices: msg += f"🌾 {p[0]} (📍 {p[1]}): {p[2]}\n"
                             send_whatsapp_message(sender_phone, msg)
-                    
-                    elif selected_id == "action_find_deliveries":
-                        deliveries = get_available_deliveries()
-                        if not deliveries:
-                            send_whatsapp_message(sender_phone, "🚫 There are currently no deliveries available in your area. Check back later!")
-                        else:
-                            send_available_deliveries_menu(sender_phone, deliveries)
 
-                    elif selected_id.startswith("deliv_"):
-                        order_id = selected_id.split("_")[1]
-                        details = get_delivery_details(order_id)
-                        if details:
-                            o_id, p_name, f_name, f_loc, f_phone, b_name, b_loc, b_phone = details
-                            send_delivery_action_buttons(sender_phone, o_id, p_name, f_name, f_loc, b_name, b_loc)
+                    elif role == "role_driver":
+                        if text == "1":
+                            if profile.get("nin_status") == "pending":
+                                send_whatsapp_message(sender_phone, "⏳ *Account Pending*\nYour NIN is under review. You will be notified once verified to deliver!")
+                            else:
+                                deliveries = get_available_deliveries()
+                                if not deliveries: send_whatsapp_message(sender_phone, "🚫 No deliveries available right now.")
+                                else:
+                                    msg = "🚚 *Available Deliveries:*\n\n"
+                                    temp_map = {}
+                                    for idx, d in enumerate(deliveries, 1):
+                                        msg += f"{idx}️⃣ Job #{d[0]} - {d[1]}\n📍 From: {d[3]} ➔ To: {d[5]}\n\n"
+                                        temp_map[str(idx)] = d[0]
+                                    msg += "_Reply with number to View & Accept_"
+                                    update_session_data(sender_phone, {"deliv_map": temp_map})
+                                    update_session(sender_phone, "driver_flow", "awaiting_accept")
+                                    send_whatsapp_message(sender_phone, msg)
+                        elif text == "2":
+                            my_jobs = get_driver_deliveries(sender_phone)
+                            if not my_jobs: send_whatsapp_message(sender_phone, "🚚 No active jobs.")
+                            else:
+                                msg = "🚚 *My Deliveries:*\n\n"
+                                temp_map = {}
+                                for idx, d in enumerate(my_jobs, 1):
+                                    msg += f"{idx}️⃣ Job #{d[0]} - {d[1]}\n🎯 Dropoff: {d[6]}\n\n"
+                                    temp_map[str(idx)] = d[0]
+                                msg += "_Reply with number to Mark Delivered_"
+                                update_session_data(sender_phone, {"active_map": temp_map})
+                                update_session(sender_phone, "driver_flow", "awaiting_complete")
+                                send_whatsapp_message(sender_phone, msg)
 
-                    elif selected_id == "action_my_deliveries":
-                        my_jobs = get_driver_deliveries(sender_phone)
-                        if not my_jobs:
-                            send_whatsapp_message(sender_phone, "🚚 You currently have no active deliveries. Click 'Find Deliveries' to get a job!")
-                        else:
-                            send_my_deliveries_menu(sender_phone, my_jobs)
-
-                    elif selected_id.startswith("managejob_"):
-                        order_id = selected_id.split("_")[1]
-                        details = get_delivery_details(order_id)
-                        if details:
-                            o_id, p_name, _, _, f_phone, b_name, _, b_phone = details
-                            send_job_completion_buttons(sender_phone, o_id, p_name, b_name, f_phone, b_phone)
-
-                elif interactive_type == "button_reply":
-                    selected_id = message_data["interactive"]["button_reply"]["id"]
-
-                    if selected_id.startswith("order_"):
-                        product_id = selected_id.split("_")[1]
-                        details = get_product_by_id(product_id)
-                        if details:
-                            p_name = details[1]
-                            send_delivery_preference_buttons(sender_phone, product_id, p_name)
-                    
-                    elif selected_id.startswith("delivery_") or selected_id.startswith("pickup_"):
-                        preference_choice, product_id = selected_id.split("_")
+                # --- SEARCH & PURCHASE FLOW ---
+                elif flow in ["buyer_search", "farmer_search"]:
+                    if step == "awaiting_search_query":
+                        category = 'produce' if flow == "buyer_search" else 'input'
+                        buyer_location = get_user_location(sender_phone)
+                        results = search_marketplace(text, category=category, buyer_location=buyer_location)
                         
-                        order_details = create_order(sender_phone, product_id, preference_choice)
-                        
-                        if order_details:
-                            pref_text = "Delivery Needed 🚚" if preference_choice == "delivery" else "Self-Pickup 🚶"
-                            send_whatsapp_message(sender_phone, f"✅ Order placed successfully for *{order_details['product_name']}*!\n\nPreference: {pref_text}\n\nThe seller has been notified and will contact you shortly.")
+                        if not results:
+                            send_whatsapp_message(sender_phone, f"😔 Nothing found for '{text}'. Type 'menu' to go back.")
+                            update_session(sender_phone, "main_menu", "idle")
+                        else:
+                            msg = f"🔍 Found these for '{text}':\n\n"
+                            result_dict = {}
+                            for idx, item in enumerate(results, 1):
+                                msg += f"{idx}️⃣ {item[1]} - {item[2]} ({item[3]})\n🧑‍🌾 Seller: {item[6]} (📍 {item[7]})\n\n"
+                                result_dict[str(idx)] = item[0] 
+                            msg += "_Reply with the number to view the item, or type 'menu'_"
+                            update_session_data(sender_phone, {"search_results": result_dict})
+                            update_session(sender_phone, flow, "awaiting_item_selection")
+                            send_whatsapp_message(sender_phone, msg)
                             
-                            farmer_phone = order_details["farmer_phone"]
+                    elif step == "awaiting_item_selection":
+                        session_data = get_session_data(sender_phone)
+                        results = session_data.get("search_results", {})
+                        
+                        if text in results:
+                            product_id = results[text]
+                            details = get_product_by_id(product_id)
+                            if details:
+                                p_id, p_name, price, qty, img_id, f_phone, f_name, loc = details
+                                qty_text = qty if qty else "Unknown"
+                                
+                                # Using the custom image function to send the photo with text options!
+                                caption = f"📦 *{p_name}*\n💰 Price: {price}\n⚖️ Available: {qty_text}\n🧑‍🌾 Seller: {f_name} ({loc})\n\n1️⃣ 🛒 Buy Now\n2️⃣ 🔍 Search Again\n\n_Reply 1 or 2_"
+                                send_whatsapp_image(sender_phone, img_id, caption)
+                                
+                                update_session_data(sender_phone, {"temp_buy_id": p_id})
+                                update_session(sender_phone, flow, "awaiting_buy_decision")
+                        else:
+                            send_whatsapp_message(sender_phone, "Invalid number. Please try again or type 'menu'.")
+                            
+                    elif step == "awaiting_buy_decision":
+                        if text == "1":
+                            update_session(sender_phone, "buyer_checkout", "awaiting_delivery")
+                            send_whatsapp_message(sender_phone, "📦 Almost done!\n\nHow would you like to receive this?\n1️⃣ Need Delivery 🚚\n2️⃣ Self Pickup 🚶\n\n_Reply 1 or 2_")
+                        elif text == "2":
+                            update_session(sender_phone, flow, "awaiting_search_query")
+                            send_whatsapp_message(sender_phone, "🔍 What else are you looking for?")
+
+                # --- CHECKOUT FLOW ---
+                elif flow == "buyer_checkout":
+                    session_data = get_session_data(sender_phone)
+                    if step == "awaiting_delivery":
+                        if text == "1": pref = "delivery"
+                        elif text == "2": pref = "pickup"
+                        else:
+                            send_whatsapp_message(sender_phone, "Invalid. Reply 1 for Delivery or 2 for Pickup.")
+                            return {"status": "ok"}
+                        
+                        update_session_data(sender_phone, {"temp_delivery_pref": pref})
+                        update_session(sender_phone, "buyer_checkout", "awaiting_payment")
+                        send_whatsapp_message(sender_phone, "💳 Payment Method\n\nHow would you like to pay?\n1️⃣ Mobile Money 📱\n2️⃣ Cash on Delivery 💵\n\n_Reply 1 or 2_")
+                        
+                    elif step == "awaiting_payment":
+                        if text == "1": pay = "Mobile Money"
+                        elif text == "2": pay = "Cash on Delivery"
+                        else:
+                            send_whatsapp_message(sender_phone, "Invalid. Reply 1 or 2.")
+                            return {"status": "ok"}
+                            
+                        prod_id = session_data.get("temp_buy_id")
+                        deliv_pref = session_data.get("temp_delivery_pref")
+                        
+                        order = create_order(sender_phone, prod_id, deliv_pref, pay)
+                        if order:
+                            pref_text = "Delivery Needed 🚚" if deliv_pref == "delivery" else "Self-Pickup 🚶"
+                            success_msg = f"✅ Order placed successfully for *{order['product_name']}*!\n\nMethod: {pref_text}\nPayment: *{pay}*\n"
+                            
+                            if pay == "Mobile Money":
+                                success_msg += f"\nPlease send payment to the seller's Mobile Money number: {order['farmer_phone']}\n"
+                                
+                            success_msg += "\nThe seller has been notified and will contact you shortly."
+                            send_whatsapp_message(sender_phone, success_msg)
+                            
+                            farmer_phone = order['farmer_phone']
                             buyer_link = f"wa.me/{sender_phone}"
-                            alert_msg = f"🚨 *NEW ORDER ALERT!* 🚨\n\nA buyer wants to purchase your *{order_details['product_name']}* ({order_details['price']}).\n\nMethod: *{pref_text}*\n\nBuyer's Contact: {buyer_link}\n\nPlease check 'View Orders' on your dashboard to accept it."
+                            alert_msg = f"🚨 *NEW ORDER ALERT!* 🚨\n\nA buyer wants to purchase your *{order['product_name']}* ({order['price']}).\n\nMethod: *{pref_text}*\nPayment: *{pay}*\n\nBuyer's Contact: {buyer_link}\n\nPlease check 'View Orders' on your dashboard to accept it."
                             send_whatsapp_message(farmer_phone, alert_msg)
                         else:
                             send_whatsapp_message(sender_phone, "Sorry, there was an issue placing the order.")
-
-                    elif selected_id == "action_search_produce":
-                        update_session(sender_phone, "buyer_search", "awaiting_search_query")
-                        send_whatsapp_message(sender_phone, "🔍 What produce are you looking for today? (e.g., Rice, Tomatoes)")
-
-                    elif selected_id.startswith("accept_") or selected_id.startswith("decline_"):
-                        action, order_id = selected_id.split("_")
-                        new_status = "ACCEPTED" if action == "accept" else "DECLINED"
-                        update_order_status(order_id, new_status)
-                        icon = "✅" if new_status == "ACCEPTED" else "❌"
-                        send_whatsapp_message(sender_phone, f"{icon} You have {new_status} Order #{order_id}.")
                         
-                        order_details = get_order_by_id(order_id)
-                        if order_details:
-                            _, p_name, b_phone, _, _, _ = order_details
-                            send_whatsapp_message(b_phone, f"🔔 *Order Update!*\n\nThe seller has {new_status} your order for {p_name}.")
+                        update_session(sender_phone, "main_menu", "idle")
+
+                # --- SELLER ORDER MANAGEMENT ---
+                elif flow == "manage_order":
+                    session_data = get_session_data(sender_phone)
+                    if step == "awaiting_selection":
+                        order_map = session_data.get("manage_map", {})
+                        if text in order_map:
+                            o_id = order_map[text]
+                            order_details = get_order_by_id(o_id)
+                            if order_details:
+                                _, p_name, b_phone, b_name, status, pref, pay_method = order_details
+                                pref_text = "Delivery Needed 🚚" if pref == "delivery" else "Buyer will Pickup 🚶"
+                                msg = f"📦 *Manage Order #{o_id}*\n\nItem: {p_name}\nBuyer: {b_name}\nMethod: *{pref_text}*\nPayment: *{pay_method}*\n\n1️⃣ Accept ✅\n2️⃣ Decline ❌\n\n_Reply 1 or 2_"
+                                
+                                update_session_data(sender_phone, {"target_order": o_id})
+                                update_session(sender_phone, "manage_order", "awaiting_action")
+                                send_whatsapp_message(sender_phone, msg)
+                        else:
+                            send_whatsapp_message(sender_phone, "Invalid number. Type 'menu' to exit.")
                             
-                    elif selected_id.startswith("acceptdeliv_"):
-                        order_id = selected_id.split("_")[1]
-                        success = assign_driver_to_order(order_id, sender_phone)
+                    elif step == "awaiting_action":
+                        order_id = session_data.get("target_order")
+                        order_details = get_order_by_id(order_id)
+                        b_phone = order_details[2] if order_details else ""
+                        p_name = order_details[1] if order_details else "item"
                         
-                        if success:
-                            send_whatsapp_message(sender_phone, f"✅ You have successfully claimed Delivery Job #{order_id}!\n\nCheck 'My Deliveries' on your dashboard for the exact pickup and dropoff contact links.")
+                        if text == "1":
+                            update_order_status(order_id, "ACCEPTED")
+                            send_whatsapp_message(sender_phone, f"✅ You have ACCEPTED Order #{order_id}.")
+                            send_whatsapp_message(b_phone, f"🔔 *Order Update!*\n\nThe seller has ACCEPTED your order for {p_name}.")
+                        elif text == "2":
+                            update_order_status(order_id, "DECLINED")
+                            send_whatsapp_message(sender_phone, f"❌ You have DECLINED Order #{order_id}.")
+                            send_whatsapp_message(b_phone, f"🔔 *Order Update!*\n\nThe seller has DECLINED your order for {p_name}.")
+                            
+                        update_session(sender_phone, "main_menu", "idle")
+                        send_whatsapp_message(sender_phone, "Type 'menu' to return to dashboard.")
+
+                # --- DRIVER FLOW ---
+                elif flow == "driver_flow":
+                    session_data = get_session_data(sender_phone)
+                    if step == "awaiting_accept":
+                        job_map = session_data.get("deliv_map", {})
+                        if text in job_map:
+                            order_id = job_map[text]
+                            details = get_delivery_details(order_id)
+                            if details:
+                                o_id, p_name, f_name, f_loc, f_phone, b_name, b_loc, b_phone = details
+                                msg = f"🚚 *Delivery Job #{o_id}*\n\n📦 Item: {p_name}\n📍 Pickup: {f_name} ({f_loc})\n🎯 Dropoff: {b_name} ({b_loc})\n\n1️⃣ Accept Job ✅\n2️⃣ Cancel ❌\n\n_Reply 1 or 2_"
+                                update_session_data(sender_phone, {"target_job": o_id})
+                                update_session(sender_phone, "driver_flow", "awaiting_confirm_accept")
+                                send_whatsapp_message(sender_phone, msg)
+                        else:
+                            send_whatsapp_message(sender_phone, "Invalid number.")
+                            
+                    elif step == "awaiting_confirm_accept":
+                        order_id = session_data.get("target_job")
+                        if text == "1":
+                            if assign_driver_to_order(order_id, sender_phone):
+                                send_whatsapp_message(sender_phone, f"✅ You have successfully claimed Delivery Job #{order_id}!\n\nCheck 'My Deliveries' on your dashboard for the exact pickup and dropoff contact links.")
+                                details = get_delivery_details(order_id)
+                                if details:
+                                    _, p_name, _, _, f_phone, _, _, b_phone = details
+                                    driver_link = f"wa.me/{sender_phone}"
+                                    send_whatsapp_message(f_phone, f"🚚 *Driver Assigned!* 🚚\n\nA driver is on their way to pick up the *{p_name}* (Order #{order_id}).\n\nDriver Contact: {driver_link}")
+                                    send_whatsapp_message(b_phone, f"🚚 *Order Shipped!* 🚚\n\nYour *{p_name}* (Order #{order_id}) has been picked up by a driver and is on its way!\n\nDriver Contact: {driver_link}")
+                            else:
+                                send_whatsapp_message(sender_phone, "❌ Sorry, there was an issue accepting this job. It might have been claimed by someone else.")
+                        
+                        update_session(sender_phone, "main_menu", "idle")
+                        send_whatsapp_message(sender_phone, "Type 'menu' to return to dashboard.")
+                        
+                    elif step == "awaiting_complete":
+                        job_map = session_data.get("active_map", {})
+                        if text in job_map:
+                            order_id = job_map[text]
+                            details = get_delivery_details(order_id)
+                            if details:
+                                o_id, p_name, _, _, f_phone, b_name, _, b_phone = details
+                                msg = f"🚚 *Job #{o_id} In Progress*\n\n📦 Item: {p_name}\n🎯 Dropoff: {b_name}\n📞 Pickup: wa.me/{f_phone}\n📞 Dropoff: wa.me/{b_phone}\n\n1️⃣ Mark Delivered ✅\n2️⃣ Cancel ❌\n\n_Reply 1 or 2_"
+                                update_session_data(sender_phone, {"target_job": o_id})
+                                update_session(sender_phone, "driver_flow", "awaiting_confirm_complete")
+                                send_whatsapp_message(sender_phone, msg)
+                        else:
+                            send_whatsapp_message(sender_phone, "Invalid number.")
+                            
+                    elif step == "awaiting_confirm_complete":
+                        order_id = session_data.get("target_job")
+                        if text == "1":
+                            update_order_status(order_id, "DELIVERED")
+                            send_whatsapp_message(sender_phone, f"✅ Job #{order_id} marked as DELIVERED! Great work.")
                             details = get_delivery_details(order_id)
                             if details:
                                 _, p_name, _, _, f_phone, _, _, b_phone = details
-                                driver_link = f"wa.me/{sender_phone}"
-                                send_whatsapp_message(f_phone, f"🚚 *Driver Assigned!* 🚚\n\nA driver is on their way to pick up the *{p_name}* (Order #{order_id}).\n\nDriver Contact: {driver_link}")
-                                send_whatsapp_message(b_phone, f"🚚 *Order Shipped!* 🚚\n\nYour *{p_name}* (Order #{order_id}) has been picked up by a driver and is on its way!\n\nDriver Contact: {driver_link}")
-                        else:
-                            send_whatsapp_message(sender_phone, "❌ Sorry, there was an issue accepting this job. It might have been claimed by someone else.")
-
-                    elif selected_id.startswith("delivered_"):
-                        order_id = selected_id.split("_")[1]
-                        update_order_status(order_id, "DELIVERED")
-                        send_whatsapp_message(sender_phone, f"✅ Job #{order_id} marked as DELIVERED! Great work.")
-                        details = get_delivery_details(order_id)
-                        if details:
-                            _, p_name, _, _, f_phone, _, _, b_phone = details
-                            send_whatsapp_message(f_phone, f"🎉 *Delivery Complete!* 🎉\n\nYour {p_name} (Order #{order_id}) has been successfully delivered to the buyer.")
-                            send_whatsapp_message(b_phone, f"🎉 *Package Arrived!* 🎉\n\nYour {p_name} (Order #{order_id}) has been successfully delivered! Thank you for using Agro Market.")
-
-            # 2. TEXT ACTIONS
-            elif msg_type == "text":
-                text = message_data["text"]["body"].strip()
-                
-                if text.lower() in ["hi", "hello", "menu"]:
-                    if profile and profile["step"] == "registered":
-                        send_main_menu(sender_phone, profile["role"])
-                    else:
-                        send_role_menu(sender_phone)
-
-                elif profile and profile["flow"] == "registration":
-                    if profile["step"] == "awaiting_name":
-                        if update_user_name_and_step(sender_phone, text):
-                            send_whatsapp_message(sender_phone, "Thanks! Now please enter your *NIN*.")
-                    elif profile["step"] == "awaiting_nin":
-                        if update_user_nin_and_step(sender_phone, text):
-                            send_whatsapp_message(sender_phone, "NIN Saved. Finally, tell us your *Location*.")
-                    elif profile["step"] == "awaiting_location":
-                        if update_user_location_and_finish(sender_phone, text):
-                            send_whatsapp_message(sender_phone, "Registration Complete! 🎉 Type *'menu'* to start.")
-
-                elif profile and profile["flow"] in ["add_produce", "add_input"]:
-                    if profile["step"] == "awaiting_produce_name":
-                        update_session_data(sender_phone, {"produce_name": text})
-                        update_session(sender_phone, profile["flow"], "awaiting_produce_price")
-                        send_whatsapp_message(sender_phone, f"Got it: *{text}*. What is the price? (e.g., 500 per unit)")
-                    elif profile["step"] == "awaiting_produce_price":
-                        update_session_data(sender_phone, {"produce_price": text})
-                        update_session(sender_phone, profile["flow"], "awaiting_produce_quantity")
-                        send_whatsapp_message(sender_phone, "Got it. ⚖️ What is the available quantity? (e.g., 50 kg, 20 bags)")
-                    elif profile["step"] == "awaiting_produce_quantity":
-                        update_session_data(sender_phone, {"produce_quantity": text})
-                        update_session(sender_phone, profile["flow"], "awaiting_produce_image")
-                        send_whatsapp_message(sender_phone, "Perfect. 📸 Finally, **send a photo** of the item!")
-
-                elif profile and profile["flow"] == "buyer_search":
-                    if profile["step"] == "awaiting_search_query":
-                        buyer_location = get_user_location(sender_phone)
-                        search_results = search_marketplace(text, category='produce', buyer_location=buyer_location)
-                        if not search_results:
-                            send_whatsapp_message(sender_phone, f"😔 We couldn't find any produce listings for '{text}'.\n\nType *'menu'* to go back.")
-                        else:
-                            send_search_results_menu(sender_phone, text, search_results, is_input=False)
-                        update_session(sender_phone, "main_menu", "registered")
-
-                elif profile and profile["flow"] == "farmer_search":
-                    if profile["step"] == "awaiting_search_query":
-                        buyer_location = get_user_location(sender_phone)
-                        search_results = search_marketplace(text, category='input', buyer_location=buyer_location)
-                        if not search_results:
-                            send_whatsapp_message(sender_phone, f"😔 We couldn't find any supply listings for '{text}'.\n\nType *'menu'* to go back.")
-                        else:
-                            send_search_results_menu(sender_phone, text, search_results, is_input=True)
-                        update_session(sender_phone, "main_menu", "registered")
-
-            # 3. IMAGE ACTIONS
-            elif msg_type == "image":
-                if profile and profile["step"] == "awaiting_produce_image":
-                    image_id = message_data["image"]["id"]
-                    category = 'input' if profile["flow"] == "add_input" else 'produce'
-                    save_new_product(sender_phone, image_id, category=category)
-                    
-                    update_session(sender_phone, "main_menu", "registered")
-                    send_whatsapp_message(sender_phone, "Listing Complete! 🎉 Your item is now live. Type 'menu' to see your dashboard.")
+                                send_whatsapp_message(f_phone, f"🎉 *Delivery Complete!* 🎉\n\nYour {p_name} (Order #{order_id}) has been successfully delivered to the buyer.")
+                                send_whatsapp_message(b_phone, f"🎉 *Package Arrived!* 🎉\n\nYour {p_name} (Order #{order_id}) has been successfully delivered! Thank you for using Agro Market.")
+                                
+                        update_session(sender_phone, "main_menu", "idle")
+                        send_whatsapp_message(sender_phone, "Type 'menu' to return to dashboard.")
 
     except Exception as e:
         print(f"Error: {e}")
     return {"status": "ok"}
-
-# ========================================================
-# NEW: ADMIN WEB DASHBOARD ROUTES
-# ========================================================
-
-@app.get("/admin", response_class=HTMLResponse)
-async def admin_dashboard():
-    pending_users = get_pending_verifications()
-    
-    html_content = """
-    <html>
-        <head>
-            <title>Agro Market Admin Panel</title>
-            <style>
-                body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; padding: 40px; }
-                h1 { color: #2E7D32; }
-                table { width: 100%; border-collapse: collapse; background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
-                th, td { padding: 15px; text-align: left; border-bottom: 1px solid #ddd; }
-                th { background-color: #2E7D32; color: white; }
-                .btn { background-color: #4CAF50; color: white; border: none; padding: 10px 20px; text-align: center; border-radius: 5px; cursor: pointer; font-weight: bold;}
-                .btn:hover { background-color: #45a049; }
-                .empty { color: #555; font-style: italic; }
-            </style>
-        </head>
-        <body>
-            <h1>🛡️ Agro Market Admin Dashboard</h1>
-            <p>Review the National Identification Numbers (NIN) of newly registered Sellers and Drivers to ensure a secure marketplace.</p>
-            <br>
-            <h3>⏳ Pending Verifications</h3>
-            <table>
-                <tr>
-                    <th>Full Name</th>
-                    <th>Phone Number</th>
-                    <th>Requested Role</th>
-                    <th>NIN Number</th>
-                    <th>Action</th>
-                </tr>
-    """
-    
-    if not pending_users:
-        html_content += "<tr><td colspan='5' class='empty'>No pending verifications at this time.</td></tr>"
-    else:
-        for u in pending_users:
-            name, phone, role, nin = u
-            display_role = role.replace("role_", "").capitalize()
-            html_content += f"""
-                <tr>
-                    <td>{name}</td>
-                    <td>{phone}</td>
-                    <td>{display_role}</td>
-                    <td><b>{nin}</b></td>
-                    <td>
-                        <form action="/admin/verify/{phone}" method="post" style="margin:0;">
-                            <button type="submit" class="btn">✅ Approve User</button>
-                        </form>
-                    </td>
-                </tr>
-            """
-            
-    html_content += """
-            </table>
-        </body>
-    </html>
-    """
-    return html_content
-
-@app.post("/admin/verify/{phone}")
-async def verify_user(phone: str):
-    if approve_user_nin(phone):
-        # Alert the user instantly via WhatsApp that they've been approved!
-        send_whatsapp_message(phone, "🎉 *Identity Verified!*\n\nYour NIN has been successfully reviewed by our admin team. You are now a trusted and verified member of Agro Market.\n\nType *'menu'* to access your full dashboard.")
-    
-    return HTMLResponse("<script>alert('User Successfully Verified! They have been notified via WhatsApp.'); window.location.href='/admin';</script>")
