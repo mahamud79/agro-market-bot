@@ -680,9 +680,18 @@ async def receive_message(request: Request):
                 
                 # 1. RESET / MENU COMMAND
                 if text in ["hi", "hello", "menu"]:
-                    create_user_with_language(sender_phone, "english")
-                    update_session(sender_phone, "onboarding", "awaiting_language")
-                    send_language_menu(sender_phone)
+                    if not profile:
+                        create_user_with_language(sender_phone, "english")
+                        update_session(sender_phone, "onboarding", "awaiting_language")
+                        send_language_menu(sender_phone)
+                    elif profile.get("step") == "registered":
+                        update_session(sender_phone, "main_menu", "idle")
+                        send_main_menu(sender_phone, profile["role"], profile["language"])
+                    elif profile.get("language") and not profile.get("role"):
+                        update_session(sender_phone, "onboarding", "awaiting_role")
+                        send_role_menu(sender_phone, profile["language"])
+                    else: 
+                        send_whatsapp_message(sender_phone, "Please continue your registration.")
                     return {"status": "ok"}
 
                 # 2. FAILSAFE FOR GHOST USERS (If DB drops the session)
