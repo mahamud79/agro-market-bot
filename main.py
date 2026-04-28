@@ -482,6 +482,24 @@ def get_dashboard_stats():
 # ========================================================
 # ADMIN WEB DASHBOARD ROUTES
 # ========================================================
+
+
+# ========================================================
+# PRIVACY POLICY (FOR META APPROVAL)
+# ========================================================
+@app.get("/", response_class=HTMLResponse)
+async def privacy_policy():
+    return """
+    <html>
+        <head><title>Privacy Policy - Agro Market</title></head>
+        <body style="font-family: Arial; padding: 40px;">
+            <h1>Privacy Policy for Agro Market Bot</h1>
+            <p>This service connects farmers and buyers via WhatsApp.</p>
+            <p>We only collect data necessary for deliveries (phone number, location) and do not sell your data to third parties.</p>
+        </body>
+    </html>
+    """
+
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_dashboard():
     pending_users = get_pending_verifications()
