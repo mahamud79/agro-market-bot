@@ -487,7 +487,7 @@ def get_dashboard_stats():
 # ========================================================
 # PRIVACY POLICY (FOR META APPROVAL)
 # ========================================================
-@app.get("/", response_class=HTMLResponse)
+@app.get("/privacy", response_class=HTMLResponse)
 async def privacy_policy():
     return """
     <html>
@@ -499,7 +499,7 @@ async def privacy_policy():
         </body>
     </html>
     """
-
+    
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_dashboard():
     pending_users = get_pending_verifications()
