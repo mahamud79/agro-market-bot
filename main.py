@@ -702,9 +702,11 @@ async def receive_message(request: Request):
                         create_user_with_language(sender_phone, "english")
                         update_session(sender_phone, "onboarding", "awaiting_language")
                         send_language_menu(sender_phone)
-                    elif profile.get("step") == "registered":
+                    # --- THE FIX IS HERE 👇 ---
+                    elif profile.get("role") and profile.get("flow") not in ["onboarding", "registration"]:
                         update_session(sender_phone, "main_menu", "idle")
                         send_main_menu(sender_phone, profile["role"], profile["language"])
+                    # -------------------------
                     elif profile.get("language") and not profile.get("role"):
                         update_session(sender_phone, "onboarding", "awaiting_role")
                         send_role_menu(sender_phone, profile["language"])
