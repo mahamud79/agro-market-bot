@@ -38,19 +38,19 @@ async def verify_webhook(request: Request):
         return Response(content=challenge, media_type="text/plain")
     return Response(status_code=403)
 
-# --- TEXT-BASED DICTIONARY ---
+# --- TEXT-BASED DICTIONARY (UPDATED TO MATCH SCRIPT) ---
 LANGUAGES = {
     "english": {
-        "welcome": "Welcome to Agro Market 🌱\n\nTo get started, please tell us how you want to use the platform:\n\n1️⃣ Farmer (Seller)\n2️⃣ Buyer\n3️⃣ Input Seller\n4️⃣ Driver / Rider\n\n_Reply with the number (e.g., 1)_",
+        "welcome": "Welcome to Agro Market 🌱\nYour trusted agricultural marketplace.\n\nPlease select your role for today:\n\n1️⃣ Sell Produce (Farmer)\n2️⃣ Buy Produce & Inputs (Buyer)\n3️⃣ Sell Farm Inputs\n4️⃣ Driver / Rider\n\n_Reply with the number (e.g., 1)_",
         "farmer_menu": "🌾 *Farmer Dashboard*\nWhat would you like to do today?\n\n1️⃣ Add Produce\n2️⃣ My Inventory\n3️⃣ View Orders\n4️⃣ Buy Supplies\n5️⃣ Market Prices\n\n_Reply with a number_",
-        "buyer_menu": "🛒 *Buyer Dashboard*\nWhat would you like to do today?\n\n1️⃣ Search Produce\n2️⃣ My Orders\n3️⃣ Market Prices\n\n_Reply with a number_",
+        "buyer_menu": "🛒 *Buyer Dashboard*\nWhat would you like to do today?\n\n1️⃣ Buy Produce\n2️⃣ Buy Farm Inputs\n3️⃣ My Orders\n4️⃣ Market Prices\n\n_Reply with a number_",
         "input_menu": "🌱 *Input Seller Dashboard*\nWhat would you like to do today?\n\n1️⃣ Add Supply\n2️⃣ My Inventory\n3️⃣ View Orders\n4️⃣ Market Prices\n\n_Reply with a number_",
         "driver_menu": "🚚 *Driver Dashboard*\nWhat would you like to do today?\n\n1️⃣ Find Deliveries\n2️⃣ My Deliveries\n\n_Reply with a number_"
     },
     "krio": {
-        "welcome": "Wɛlkɔm to Agro Makit 🌱\n\nFɔ stat, tɛl wi aw yu want fɔ yuz dis platfɔm:\n\n1️⃣ Fama (Sɛla)\n2️⃣ Baya\n3️⃣ Inpuyt Sɛla\n4️⃣ Drayva / Rayda\n\n_Reply with the number (e.g., 1)_",
+        "welcome": "Wɛlkɔm to Agro Makit 🌱\n\nFɔ stat, tɛl wi aw yu want fɔ yuz dis platfɔm tide:\n\n1️⃣ Sɛl Produce (Fama)\n2️⃣ Bay Produce & Inputs (Baya)\n3️⃣ Sɛl Farm Inputs\n4️⃣ Drayva / Rayda\n\n_Reply with the number (e.g., 1)_",
         "farmer_menu": "🌾 *Fama Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Add Produce\n2️⃣ My Inventory\n3️⃣ View Orders\n4️⃣ Buy Supplies\n5️⃣ Market Prices\n\n_Reply with a number_",
-        "buyer_menu": "🛒 *Baya Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Search Produce\n2️⃣ My Orders\n3️⃣ Market Prices\n\n_Reply with a number_",
+        "buyer_menu": "🛒 *Baya Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Buy Produce\n2️⃣ Buy Farm Inputs\n3️⃣ My Orders\n4️⃣ Market Prices\n\n_Reply with a number_",
         "input_menu": "🌱 *Input Seller Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Add Supply\n2️⃣ My Inventory\n3️⃣ View Orders\n4️⃣ Market Prices\n\n_Reply with a number_",
         "driver_menu": "🚚 *Driver Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Find Deliveries\n2️⃣ My Deliveries\n\n_Reply with a number_"
     }
@@ -105,11 +105,11 @@ def get_user_profile(phone_number):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        cursor.execute("SELECT u.role, u.nin_status, u.language, us.current_flow, us.current_step FROM users u LEFT JOIN user_sessions us ON u.phone = us.phone WHERE u.phone = %s", (phone_number,))
+        cursor.execute("SELECT u.role, u.nin_status, u.language, us.current_flow, us.current_step, u.name FROM users u LEFT JOIN user_sessions us ON u.phone = us.phone WHERE u.phone = %s", (phone_number,))
         result = cursor.fetchone()
         cursor.close()
         conn.close()
-        if result: return {"role": result[0], "nin_status": result[1], "language": result[2] or "english", "flow": result[3], "step": result[4]}
+        if result: return {"role": result[0], "nin_status": result[1], "language": result[2] or "english", "flow": result[3], "step": result[4], "name": result[5]}
         return None
     except: return None
 
@@ -345,17 +345,30 @@ def create_user_with_language(phone_number, lang):
         return True
     except: return False
 
-def update_user_role_and_step(phone_number, role_id):
+# --- NEW SMART ROLE UPDATER ---
+def update_user_role(phone_number, role_id):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         cursor.execute("UPDATE users SET role = %s WHERE phone = %s", (role_id, phone_number))
-        cursor.execute("INSERT INTO user_sessions (phone, current_flow, current_step) VALUES (%s, 'registration', 'awaiting_name') ON CONFLICT (phone) DO UPDATE SET current_flow = EXCLUDED.current_flow, current_step = EXCLUDED.current_step;", (phone_number,))
+        cursor.execute("SELECT name, location FROM users WHERE phone = %s", (phone_number,))
+        user = cursor.fetchone()
+        
+        # If user already registered fully, skip registration flow!
+        if user and user[0] and user[1]:
+            cursor.execute("UPDATE user_sessions SET current_flow = 'main_menu', current_step = 'idle' WHERE phone = %s", (phone_number,))
+            is_registered = True
+        else:
+            cursor.execute("INSERT INTO user_sessions (phone, current_flow, current_step) VALUES (%s, 'registration', 'awaiting_name') ON CONFLICT (phone) DO UPDATE SET current_flow = EXCLUDED.current_flow, current_step = EXCLUDED.current_step;", (phone_number,))
+            is_registered = False
+            
         conn.commit()
         cursor.close()
         conn.close()
-        return True
-    except: return False
+        return is_registered
+    except Exception as e:
+        print(f"Role Update Error: {e}")
+        return False
 
 def update_user_name_and_step(phone_number, name):
     try:
@@ -369,11 +382,12 @@ def update_user_name_and_step(phone_number, name):
         return True
     except: return False
 
+# --- INSTANT AUTO VERIFICATION UPDATE ---
 def update_user_nin_and_step(phone_number, nin):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        cursor.execute("UPDATE users SET nin_number = %s, nin_status = 'pending' WHERE phone = %s", (nin, phone_number))
+        cursor.execute("UPDATE users SET nin_number = %s, nin_status = 'verified' WHERE phone = %s", (nin, phone_number))
         cursor.execute("UPDATE user_sessions SET current_step = 'awaiting_location' WHERE phone = %s", (phone_number,))
         conn.commit()
         cursor.close()
@@ -386,7 +400,7 @@ def update_user_location_and_finish(phone_number, location):
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         cursor.execute("UPDATE users SET location = %s WHERE phone = %s", (location, phone_number))
-        cursor.execute("UPDATE user_sessions SET current_flow = 'main_menu', current_step = 'registered' WHERE phone = %s", (phone_number,))
+        cursor.execute("UPDATE user_sessions SET current_flow = 'main_menu', current_step = 'idle' WHERE phone = %s", (phone_number,))
         conn.commit()
         cursor.close()
         conn.close()
@@ -478,10 +492,6 @@ def get_dashboard_stats():
         return {"total_users": total_users, "active_orders": active_orders, "total_deliveries": total_deliveries}
     except:
         return {"total_users": 0, "active_orders": 0, "total_deliveries": 0}
-
-# ========================================================
-# ADMIN WEB DASHBOARD ROUTES
-# ========================================================
 
 
 # ========================================================
@@ -660,16 +670,11 @@ async def receive_message(request: Request):
                 send_whatsapp_message(sender_phone, "🎙️ *Voice Note Processing...*\n_Simulated AI Translation:_ 'Menu'")
                 if not profile:
                     create_user_with_language(sender_phone, "english")
-                    update_session(sender_phone, "onboarding", "awaiting_language")
-                    send_language_menu(sender_phone)
-                elif profile.get("step") == "registered":
-                    update_session(sender_phone, "main_menu", "idle")
-                    send_main_menu(sender_phone, profile["role"], profile["language"])
-                elif profile.get("language") and not profile.get("role"):
                     update_session(sender_phone, "onboarding", "awaiting_role")
-                    send_role_menu(sender_phone, profile["language"])
+                    send_role_menu(sender_phone, "english")
                 else:
-                    send_whatsapp_message(sender_phone, "Please continue your registration.")
+                    update_session(sender_phone, "onboarding", "awaiting_role")
+                    send_role_menu(sender_phone, profile.get("language", "english"))
                 return {"status": "ok"}
             
             # --- 📍 LOCATION PINS ---
@@ -679,7 +684,10 @@ async def receive_message(request: Request):
                     long = message_data["location"]["longitude"]
                     address = message_data["location"].get("name", f"Location: {lat}, {long}")
                     if update_user_location_and_finish(sender_phone, address):
-                        send_whatsapp_message(sender_phone, f"📍 Location Saved: {address}\n\nRegistration Complete! 🎉 Type *'menu'* to start.")
+                        send_whatsapp_message(sender_phone, f"📍 Location Saved: {address}\n\n✅ Registration Complete! 🎉")
+                        # Fetch fresh profile to send the correct dashboard
+                        fresh_profile = get_user_profile(sender_phone)
+                        send_main_menu(sender_phone, fresh_profile["role"], fresh_profile["language"])
                 return {"status": "ok"}
             
             # --- 📸 IMAGE UPLOADS ---
@@ -689,29 +697,19 @@ async def receive_message(request: Request):
                     category = 'input' if profile["flow"] == "add_input" else 'produce'
                     save_new_product(sender_phone, image_id, category=category)
                     update_session(sender_phone, "main_menu", "idle")
-                    send_whatsapp_message(sender_phone, "Listing Complete! 🎉 Your item is now live. Type 'menu' to see your dashboard.")
+                    send_whatsapp_message(sender_phone, "✅ Listing Complete! Your item is now live and buyers can view its image.\n\nType 'menu' to return to your dashboard.")
                 return {"status": "ok"}
 
             # --- 💬 TEXT AND NUMBER REPLIES ---
             elif msg_type == "text":
                 text = message_data["text"]["body"].strip().lower()
                 
-                # 1. RESET / MENU COMMAND
+                # --- NEW FEATURE: ROLE SWITCHING & MENU LOOPHOLE ---
                 if text in ["hi", "hello", "menu"]:
                     if not profile:
                         create_user_with_language(sender_phone, "english")
-                        update_session(sender_phone, "onboarding", "awaiting_language")
-                        send_language_menu(sender_phone)
-                    # --- THE FIX IS HERE 👇 ---
-                    elif profile.get("role") and profile.get("flow") not in ["onboarding", "registration"]:
-                        update_session(sender_phone, "main_menu", "idle")
-                        send_main_menu(sender_phone, profile["role"], profile["language"])
-                    # -------------------------
-                    elif profile.get("language") and not profile.get("role"):
-                        update_session(sender_phone, "onboarding", "awaiting_role")
-                        send_role_menu(sender_phone, profile["language"])
-                    else: 
-                        send_whatsapp_message(sender_phone, "Please continue your registration.")
+                    update_session(sender_phone, "onboarding", "awaiting_role")
+                    send_role_menu(sender_phone, profile.get("language", "english") if profile else "english")
                     return {"status": "ok"}
 
                 # 2. FAILSAFE FOR GHOST USERS (If DB drops the session)
@@ -744,8 +742,12 @@ async def receive_message(request: Request):
                     elif step == "awaiting_role":
                         roles = {"1": "role_farmer", "2": "role_buyer", "3": "role_input", "4": "role_driver"}
                         if text in roles:
-                            update_user_role_and_step(sender_phone, roles[text])
-                            send_whatsapp_message(sender_phone, "Awesome! Please type your *Full Name*.")
+                            # SMART UPDATE: Checks if they are already fully registered
+                            is_registered = update_user_role(sender_phone, roles[text])
+                            if is_registered:
+                                send_main_menu(sender_phone, roles[text], profile.get("language", "english"))
+                            else: 
+                                send_whatsapp_message(sender_phone, "Awesome! Let's get you registered.\n\nPlease type your *Full Name*.")
                         else: 
                             send_whatsapp_message(sender_phone, "Invalid. Please reply with 1, 2, 3, or 4.")
 
@@ -753,28 +755,34 @@ async def receive_message(request: Request):
                 elif flow == "registration":
                     if step == "awaiting_name":
                         update_user_name_and_step(sender_phone, text)
-                        send_whatsapp_message(sender_phone, "Thanks! Now please enter your *NIN*.")
+                        send_whatsapp_message(sender_phone, "Thanks! Now please enter your *NIN (National ID Number)*.")
                     elif step == "awaiting_nin":
+                        # UPDATED: Instant Auto-Verification
                         update_user_nin_and_step(sender_phone, text)
-                        send_whatsapp_message(sender_phone, "NIN Saved. Tell us your *Location* (e.g., Bo, Freetown) or send a location pin 📍.")
+                        send_whatsapp_message(sender_phone, "⏳ Verifying your identity...\n\n✅ Identity verified successfully.\n\nNow share your location 📍 OR type your district.")
                     elif step == "awaiting_location":
                         update_user_location_and_finish(sender_phone, text)
-                        send_whatsapp_message(sender_phone, "Registration Complete! 🎉 Type *'menu'* to start.")
+                        fresh_profile = get_user_profile(sender_phone)
+                        send_whatsapp_message(sender_phone, "✅ Registration Complete! 🎉")
+                        send_main_menu(sender_phone, fresh_profile["role"], fresh_profile["language"])
 
                 # --- ADD PRODUCE / INPUT FLOW ---
                 elif flow in ["add_produce", "add_input"]:
                     if step == "awaiting_produce_name":
                         update_session_data(sender_phone, {"produce_name": text})
-                        update_session(sender_phone, flow, "awaiting_produce_price")
-                        send_whatsapp_message(sender_phone, f"Got it: *{text}*. What is the price? (e.g., 500 per unit)")
-                    elif step == "awaiting_produce_price":
-                        update_session_data(sender_phone, {"produce_price": text})
                         update_session(sender_phone, flow, "awaiting_produce_quantity")
-                        send_whatsapp_message(sender_phone, "Got it. ⚖️ What is the available quantity?")
+                        send_whatsapp_message(sender_phone, f"Got it: *{text}*. How much do you have available? (e.g., 50 bags, 200kg)")
                     elif step == "awaiting_produce_quantity":
                         update_session_data(sender_phone, {"produce_quantity": text})
+                        update_session(sender_phone, flow, "awaiting_produce_price")
+                        send_whatsapp_message(sender_phone, "Got it. ⚖️ Enter your price per unit/bag.\n\n_OR reply 0️⃣ to use the current market price._")
+                    elif step == "awaiting_produce_price":
+                        price = text
+                        # UPDATED: Handles market price shortcut
+                        if text == "0": price = "Market Price"
+                        update_session_data(sender_phone, {"produce_price": price})
                         update_session(sender_phone, flow, "awaiting_produce_image")
-                        send_whatsapp_message(sender_phone, "Perfect. 📸 Finally, **send a photo** of the item!")
+                        send_whatsapp_message(sender_phone, "Perfect. 📸 Finally, **send a photo** of the product!")
 
                 # --- MAIN MENU ROUTING ---
                 elif flow == "main_menu" and step == "idle":
@@ -782,11 +790,8 @@ async def receive_message(request: Request):
                     
                     if role == "role_farmer":
                         if text == "1":
-                            if profile.get("nin_status") == "pending":
-                                send_whatsapp_message(sender_phone, "⏳ *Account Pending*\nYour NIN is under review. You will be notified once verified to sell!")
-                            else:
-                                update_session(sender_phone, "add_produce", "awaiting_produce_name")
-                                send_whatsapp_message(sender_phone, "Great! 🌾 What is the name of the produce?")
+                            update_session(sender_phone, "add_produce", "awaiting_produce_name")
+                            send_whatsapp_message(sender_phone, "Great! 🌾 What is the name of the produce?")
                         elif text == "2":
                             inventory = get_user_inventory(sender_phone)
                             if not inventory: send_whatsapp_message(sender_phone, "📦 Inventory is empty.")
@@ -809,6 +814,7 @@ async def receive_message(request: Request):
                                 send_whatsapp_message(sender_phone, msg)
                         elif text == "4":
                             update_session(sender_phone, "farmer_search", "awaiting_search_query")
+                            update_session_data(sender_phone, {"search_category": "input"})
                             send_whatsapp_message(sender_phone, "🚜 What supplies do you need? (e.g., Seeds, Fertilizer)")
                         elif text == "5":
                             prices = get_market_prices()
@@ -818,16 +824,23 @@ async def receive_message(request: Request):
                             
                     elif role == "role_buyer":
                         if text == "1":
+                            # UPDATED: Search only produce
                             update_session(sender_phone, "buyer_search", "awaiting_search_query")
-                            send_whatsapp_message(sender_phone, "🔍 What produce are you looking for?")
+                            update_session_data(sender_phone, {"search_category": "produce"})
+                            send_whatsapp_message(sender_phone, "🔍 What produce are you looking for? (e.g., Rice, Cassava)")
                         elif text == "2":
+                            # UPDATED: Search only inputs
+                            update_session(sender_phone, "buyer_search", "awaiting_search_query")
+                            update_session_data(sender_phone, {"search_category": "input"})
+                            send_whatsapp_message(sender_phone, "🚜 What farm inputs are you looking for? (e.g., Fertilizer, Tools)")
+                        elif text == "3":
                             orders = get_buyer_orders(sender_phone)
                             if not orders: send_whatsapp_message(sender_phone, "🛒 No recent orders.")
                             else:
                                 msg = "🛒 *Recent Orders:*\n\n"
                                 for o in orders: msg += f"📦 {o[1]} (Status: {o[2].upper()})\n"
                                 send_whatsapp_message(sender_phone, msg)
-                        elif text == "3":
+                        elif text == "4":
                             prices = get_market_prices()
                             msg = "📊 *Today's Market Prices:*\n\n"
                             for p in prices: msg += f"🌾 {p[0]} (📍 {p[1]}): {p[2]}\n"
@@ -835,11 +848,8 @@ async def receive_message(request: Request):
 
                     elif role == "role_input":
                         if text == "1":
-                            if profile.get("nin_status") == "pending":
-                                send_whatsapp_message(sender_phone, "⏳ *Account Pending*\nYour NIN is under review. You will be notified once verified to sell!")
-                            else:
-                                update_session(sender_phone, "add_input", "awaiting_produce_name")
-                                send_whatsapp_message(sender_phone, "Great! 🚜 What is the name of the supply/tool?")
+                            update_session(sender_phone, "add_input", "awaiting_produce_name")
+                            send_whatsapp_message(sender_phone, "Great! 🚜 What is the name of the supply/tool?")
                         elif text == "2":
                             inventory = get_user_inventory(sender_phone)
                             if not inventory: send_whatsapp_message(sender_phone, "📦 Inventory is empty.")
@@ -868,21 +878,18 @@ async def receive_message(request: Request):
 
                     elif role == "role_driver":
                         if text == "1":
-                            if profile.get("nin_status") == "pending":
-                                send_whatsapp_message(sender_phone, "⏳ *Account Pending*\nYour NIN is under review. You will be notified once verified to deliver!")
+                            deliveries = get_available_deliveries()
+                            if not deliveries: send_whatsapp_message(sender_phone, "🚫 No deliveries available right now.")
                             else:
-                                deliveries = get_available_deliveries()
-                                if not deliveries: send_whatsapp_message(sender_phone, "🚫 No deliveries available right now.")
-                                else:
-                                    msg = "🚚 *Available Deliveries:*\n\n"
-                                    temp_map = {}
-                                    for idx, d in enumerate(deliveries, 1):
-                                        msg += f"{idx}️⃣ Job #{d[0]} - {d[1]}\n📍 From: {d[3]} ➔ To: {d[5]}\n\n"
-                                        temp_map[str(idx)] = d[0]
-                                    msg += "_Reply with number to View & Accept_"
-                                    update_session_data(sender_phone, {"deliv_map": temp_map})
-                                    update_session(sender_phone, "driver_flow", "awaiting_accept")
-                                    send_whatsapp_message(sender_phone, msg)
+                                msg = "🚚 *Available Deliveries:*\n\n"
+                                temp_map = {}
+                                for idx, d in enumerate(deliveries, 1):
+                                    msg += f"{idx}️⃣ Job #{d[0]} - {d[1]}\n📍 From: {d[3]} ➔ To: {d[5]}\n\n"
+                                    temp_map[str(idx)] = d[0]
+                                msg += "_Reply with number to View & Accept_"
+                                update_session_data(sender_phone, {"deliv_map": temp_map})
+                                update_session(sender_phone, "driver_flow", "awaiting_accept")
+                                send_whatsapp_message(sender_phone, msg)
                         elif text == "2":
                             my_jobs = get_driver_deliveries(sender_phone)
                             if not my_jobs: send_whatsapp_message(sender_phone, "🚚 No active jobs.")
@@ -900,7 +907,8 @@ async def receive_message(request: Request):
                 # --- SEARCH & PURCHASE FLOW ---
                 elif flow in ["buyer_search", "farmer_search"]:
                     if step == "awaiting_search_query":
-                        category = 'produce' if flow == "buyer_search" else 'input'
+                        # UPDATED: Pulls search category seamlessly for omni-buyers
+                        category = get_session_data(sender_phone).get("search_category", "produce") if flow == "buyer_search" else "input"
                         buyer_location = get_user_location(sender_phone)
                         results = search_marketplace(text, category=category, buyer_location=buyer_location)
                         
@@ -929,7 +937,7 @@ async def receive_message(request: Request):
                                 p_id, p_name, price, qty, img_id, f_phone, f_name, loc = details
                                 qty_text = qty if qty else "Unknown"
                                 
-                                # Using the custom image function to send the photo with text options!
+                                # THIS IS THE IMAGE FUNCTION: It automatically pushes the product image to the buyer!
                                 caption = f"📦 *{p_name}*\n💰 Price: {price}\n⚖️ Available: {qty_text}\n🧑‍🌾 Seller: {f_name} ({loc})\n\n1️⃣ 🛒 Buy Now\n2️⃣ 🔍 Search Again\n\n_Reply 1 or 2_"
                                 send_whatsapp_image(sender_phone, img_id, caption)
                                 
