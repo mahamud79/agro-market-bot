@@ -1,7 +1,11 @@
 from fastapi import FastAPI, Request, Response, Form
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 import os
 import json
+import random
+import secrets
+import hashlib
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import psycopg2
 import requests
@@ -14,6 +18,7 @@ VERIFY_TOKEN = "my_custom_secure_token"
 DATABASE_URL = os.getenv("DATABASE_URL")
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
+ADMIN_PHONE = os.getenv("ADMIN_PHONE")
 
 @app.on_event("startup")
 async def startup_event():
@@ -509,9 +514,161 @@ async def privacy_policy():
         </body>
     </html>
     """
+
+# ========================================================
+# SECURE ADMIN WEB DASHBOARD ROUTES (PASSWORD + OTP RESET)
+# ========================================================
+
+def hash_password(password: str):
+    """Securely scrambles the password using built-in SHA-256"""
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
+def is_admin_authorized(request: Request):
+    session_cookie = request.cookies.get("secure_admin_session")
+    if not session_cookie: return False
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("SELECT phone FROM admin_auth WHERE session_token = %s", (session_cookie,))
+        auth_check = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        if not auth_check or auth_check[0] != ADMIN_PHONE: return False
+        return True
+    except: return False
+
+@app.get("/admin/login", response_class=HTMLResponse)
+async def login_page():
+    # 1. Main Login Form (Only asks for password)
+    # 2. Change Password button (Triggers WhatsApp OTP)
+    return """
+    <html>
+        <body style="font-family: Arial; padding: 50px; text-align: center; background-color: #f4f7f6;">
+            <div style="background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 400px; margin: auto;">
+                <h2 style="color: #2E7D32;">Admin Login</h2>
+                <form action="/admin/process-login" method="post">
+                    <input type="password" name="password" placeholder="Enter Password" required style="padding: 10px; width: 100%; margin-bottom: 20px; border: 1px solid #ccc; border-radius: 4px;">
+                    <button type="submit" style="background-color: #2E7D32; color: white; border: none; padding: 12px 20px; width: 100%; border-radius: 4px; cursor: pointer; font-weight: bold;">Login</button>
+                </form>
+                <hr style="border: 0; border-top: 1px solid #eee; margin: 25px 0;">
+                <form action="/admin/trigger-reset" method="post" style="margin:0;">
+                    <button type="submit" style="background-color: transparent; color: #555; border: none; cursor: pointer; text-decoration: underline;">Change / Forgot Password?</button>
+                </form>
+            </div>
+        </body>
+    </html>
+    """
+
+@app.post("/admin/process-login")
+async def process_login(request: Request):
+    form_data = await request.form()
+    password = form_data.get("password")
     
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("SELECT password_hash FROM admin_auth WHERE phone = %s", (ADMIN_PHONE,))
+        result = cursor.fetchone()
+        
+        if result and result[0]:
+            db_hash = result[0]
+            # Check if entered password matches DB hash
+            if hash_password(password) == db_hash:
+                session_token = secrets.token_hex(32)
+                cursor.execute("UPDATE admin_auth SET session_token = %s WHERE phone = %s", (session_token, ADMIN_PHONE))
+                conn.commit()
+                cursor.close()
+                conn.close()
+                
+                response = RedirectResponse(url="/admin", status_code=302)
+                response.set_cookie(key="secure_admin_session", value=session_token, httponly=True, secure=True, max_age=86400)
+                return response
+                
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"Login Error: {e}")
+        
+    return HTMLResponse("<script>alert('Invalid Password. If this is your first time, click Change Password.'); window.location.href='/admin/login';</script>")
+
+@app.post("/admin/trigger-reset")
+async def trigger_reset():
+    otp = str(random.randint(100000, 999999))
+    expires = datetime.now() + timedelta(minutes=5)
+    
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO admin_auth (phone, otp_code, expires_at) VALUES (%s, %s, %s) ON CONFLICT (phone) DO UPDATE SET otp_code = EXCLUDED.otp_code, expires_at = EXCLUDED.expires_at;", (ADMIN_PHONE, otp, expires))
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"Reset DB Error: {e}")
+        return HTMLResponse("<script>alert('Database Error.'); window.location.href='/admin/login';</script>")
+    
+    send_whatsapp_message(ADMIN_PHONE, f"🔒 *Agro Market Password Reset*\n\nYour security code to change the admin dashboard password is: *{otp}*\n\nThis code expires in 5 minutes.")
+    
+    return f"""
+    <html>
+        <body style="font-family: Arial; padding: 50px; text-align: center; background-color: #f4f7f6;">
+            <div style="background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 400px; margin: auto;">
+                <h2 style="color: #2E7D32;">Change Password</h2>
+                <p>We just sent a 6-digit code to the Admin WhatsApp number.</p>
+                <form action="/admin/save-new-password" method="post">
+                    <input type="text" name="otp" placeholder="6-digit WhatsApp Code" required style="padding: 10px; width: 100%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; text-align: center; font-size: 18px; letter-spacing: 3px;">
+                    <input type="password" name="new_password" placeholder="New Password" required style="padding: 10px; width: 100%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px;">
+                    <input type="password" name="confirm_password" placeholder="Confirm New Password" required style="padding: 10px; width: 100%; margin-bottom: 20px; border: 1px solid #ccc; border-radius: 4px;">
+                    <button type="submit" style="background-color: #2E7D32; color: white; border: none; padding: 12px 20px; width: 100%; border-radius: 4px; cursor: pointer; font-weight: bold;">Set Password & Login</button>
+                </form>
+            </div>
+        </body>
+    </html>
+    """
+
+@app.post("/admin/save-new-password")
+async def save_new_password(request: Request):
+    form_data = await request.form()
+    user_otp = form_data.get("otp")
+    new_pwd = form_data.get("new_password")
+    conf_pwd = form_data.get("confirm_password")
+    
+    if new_pwd != conf_pwd:
+        return HTMLResponse("<script>alert('Passwords do not match!'); window.history.back();</script>")
+        
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("SELECT otp_code, expires_at FROM admin_auth WHERE phone = %s", (ADMIN_PHONE,))
+        result = cursor.fetchone()
+        
+        if result:
+            db_otp, expires_at = result
+            if user_otp == db_otp and datetime.now() < expires_at:
+                # OTP is valid! Hash new password and create login session
+                new_hash = hash_password(new_pwd)
+                session_token = secrets.token_hex(32)
+                
+                cursor.execute("UPDATE admin_auth SET password_hash = %s, session_token = %s WHERE phone = %s", (new_hash, session_token, ADMIN_PHONE))
+                conn.commit()
+                cursor.close()
+                conn.close()
+                
+                response = RedirectResponse(url="/admin", status_code=302)
+                response.set_cookie(key="secure_admin_session", value=session_token, httponly=True, secure=True, max_age=86400)
+                return response
+                
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"Save Pwd Error: {e}")
+        
+    return HTMLResponse("<script>alert('Invalid or expired code. Please try again.'); window.location.href='/admin/login';</script>")
+
 @app.get("/admin", response_class=HTMLResponse)
-async def admin_dashboard():
+async def admin_dashboard(request: Request):
+    if not is_admin_authorized(request): return RedirectResponse(url="/admin/login")
+
     pending_users = get_pending_verifications()
     market_prices = get_market_prices(include_id=True)
     stats = get_dashboard_stats()
@@ -542,9 +699,11 @@ async def admin_dashboard():
                 .stat-card {{ background: white; padding: 25px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); flex: 1; text-align: center; border-top: 5px solid #2E7D32; }}
                 .stat-card h3 {{ margin: 0; color: #555; font-size: 16px; text-transform: uppercase; letter-spacing: 1px; }}
                 .stat-card p {{ margin: 15px 0 0; font-size: 36px; font-weight: bold; color: #2E7D32; }}
+                .logout-btn {{ float: right; background-color: #555; color: white; padding: 10px 15px; text-decoration: none; border-radius: 4px; font-weight: bold; }}
             </style>
         </head>
         <body>
+            <a href="/admin/logout" class="logout-btn">🔒 Logout</a>
             <h1>🛡️ Agro Market Admin Dashboard</h1>
             <div class="stats-container">
                 <div class="stat-card">
@@ -625,28 +784,41 @@ async def admin_dashboard():
     """
     return html_content
 
+@app.get("/admin/logout")
+async def logout(request: Request):
+    response = RedirectResponse(url="/admin/login")
+    response.delete_cookie("secure_admin_session")
+    return response
+
+# --- SECURED POST ROUTES ---
 @app.post("/admin/verify/{phone}")
-async def verify_user(phone: str):
+async def verify_user(phone: str, request: Request):
+    if not is_admin_authorized(request): return HTMLResponse("<script>alert('Unauthorized'); window.location.href='/admin/login';</script>")
     if approve_user_nin(phone):
         send_whatsapp_message(phone, "🎉 *Identity Verified!*\n\nYour NIN has been successfully reviewed by our admin team. You are now a trusted and verified member of Agro Market.\n\nType *'menu'* to access your full dashboard.")
     return HTMLResponse("<script>alert('User Successfully Verified! They have been notified via WhatsApp.'); window.location.href='/admin';</script>")
 
 @app.post("/admin/reject/{phone}")
-async def reject_user(phone: str):
+async def reject_user(phone: str, request: Request):
+    if not is_admin_authorized(request): return HTMLResponse("<script>alert('Unauthorized'); window.location.href='/admin/login';</script>")
     if reject_user_nin(phone):
         send_whatsapp_message(phone, "❌ *Identity Verification Failed*\n\nUnfortunately, we were unable to verify your National Identification Number (NIN). Your registration has been rejected. Please type 'Hi' to register again with a valid NIN.")
     return HTMLResponse("<script>alert('User Rejected and Deleted.'); window.location.href='/admin';</script>")
 
 @app.post("/admin/price/add")
 async def admin_add_price(request: Request):
+    if not is_admin_authorized(request): return HTMLResponse("<script>alert('Unauthorized'); window.location.href='/admin/login';</script>")
     form_data = await request.form()
     add_market_price(form_data.get("crop_name"), form_data.get("location"), form_data.get("price"))
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 @app.post("/admin/price/delete/{price_id}")
-async def admin_delete_price(price_id: int):
+async def admin_delete_price(price_id: int, request: Request):
+    if not is_admin_authorized(request): return HTMLResponse("<script>alert('Unauthorized'); window.location.href='/admin/login';</script>")
     delete_market_price(price_id)
     return HTMLResponse("<script>window.location.href='/admin';</script>")
+
+    
 
 # ========================================================
 # MAIN WEBHOOK - ALL FEATURES + TEXT NAVIGATION
