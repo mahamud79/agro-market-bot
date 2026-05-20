@@ -591,7 +591,40 @@ async def process_login(request: Request):
         
     return HTMLResponse("<script>alert('Invalid Password. If this is your first time, click Change Password.'); window.location.href='/admin/login';</script>")
 
-@app.post("/admin/trigger-reset")
+@app.post("/admin/trigger-reset", response_class=HTMLResponse)
+async def trigger_reset():
+    otp = str(random.randint(100000, 999999))
+    expires = datetime.now() + timedelta(minutes=5)
+    
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO admin_auth (phone, otp_code, expires_at) VALUES (%s, %s, %s) ON CONFLICT (phone) DO UPDATE SET otp_code = EXCLUDED.otp_code, expires_at = EXCLUDED.expires_at;", (ADMIN_PHONE, otp, expires))
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"Reset DB Error: {e}")
+        return HTMLResponse("<script>alert('Database Error.'); window.location.href='/admin/login';</script>")
+    
+    send_whatsapp_message(ADMIN_PHONE, f"🔒 *Agro Market Password Reset*\n\nYour security code to change the admin dashboard password is: *{otp}*\n\nThis code expires in 5 minutes.")
+    
+    return f"""
+    <html>
+        <body style="font-family: Arial; padding: 50px; text-align: center; background-color: #f4f7f6;">
+            <div style="background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 400px; margin: auto;">
+                <h2 style="color: #2E7D32;">Change Password</h2>
+                <p>We just sent a 6-digit code to the Admin WhatsApp number.</p>
+                <form action="/admin/save-new-password" method="post">
+                    <input type="text" name="otp" placeholder="6-digit WhatsApp Code" required style="padding: 10px; width: 100%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; text-align: center; font-size: 18px; letter-spacing: 3px;">
+                    <input type="password" name="new_password" placeholder="New Password" required style="padding: 10px; width: 100%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px;">
+                    <input type="password" name="confirm_password" placeholder="Confirm New Password" required style="padding: 10px; width: 100%; margin-bottom: 20px; border: 1px solid #ccc; border-radius: 4px;">
+                    <button type="submit" style="background-color: #2E7D32; color: white; border: none; padding: 12px 20px; width: 100%; border-radius: 4px; cursor: pointer; font-weight: bold;">Set Password & Login</button>
+                </form>
+            </div>
+        </body>
+    </html>
+    """@app.post("/admin/trigger-reset", response_class=HTMLResponse)
 async def trigger_reset():
     otp = str(random.randint(100000, 999999))
     expires = datetime.now() + timedelta(minutes=5)
@@ -818,7 +851,7 @@ async def admin_delete_price(price_id: int, request: Request):
     delete_market_price(price_id)
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
-    
+
 
 # ========================================================
 # MAIN WEBHOOK - ALL FEATURES + TEXT NAVIGATION
