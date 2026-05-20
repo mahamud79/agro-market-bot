@@ -616,15 +616,43 @@ async def trigger_reset():
     
     return f"""
     <html>
+        <head>
+            <script>
+                // Simple 5-minute countdown timer
+                let timeLeft = 300; 
+                function updateTimer() {{
+                    const timerDisplay = document.getElementById('timer');
+                    if (timeLeft <= 0) {{
+                        timerDisplay.innerHTML = "<span style='color: red;'>Code expired. Please resend.</span>";
+                    }} else {{
+                        let m = Math.floor(timeLeft / 60);
+                        let s = timeLeft % 60;
+                        timerDisplay.innerHTML = "Expires in: <b>" + (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s + "</b>";
+                        timeLeft -= 1;
+                        setTimeout(updateTimer, 1000);
+                    }}
+                }}
+                window.onload = updateTimer;
+            </script>
+        </head>
         <body style="font-family: Arial; padding: 50px; text-align: center; background-color: #f4f7f6;">
             <div style="background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 400px; margin: auto;">
                 <h2 style="color: #2E7D32;">Change Password</h2>
                 <p>We just sent a 6-digit code to the Admin WhatsApp number.</p>
-                <form action="/admin/save-new-password" method="post">
+                
+                <p id="timer" style="color: #555; font-size: 14px; margin-bottom: 20px;"></p>
+
+                <form action="/admin/save-new-password" method="post" style="margin-bottom: 10px;">
                     <input type="text" name="otp" placeholder="6-digit WhatsApp Code" required style="padding: 10px; width: 100%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; text-align: center; font-size: 18px; letter-spacing: 3px;">
                     <input type="password" name="new_password" placeholder="New Password" required style="padding: 10px; width: 100%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px;">
                     <input type="password" name="confirm_password" placeholder="Confirm New Password" required style="padding: 10px; width: 100%; margin-bottom: 20px; border: 1px solid #ccc; border-radius: 4px;">
                     <button type="submit" style="background-color: #2E7D32; color: white; border: none; padding: 12px 20px; width: 100%; border-radius: 4px; cursor: pointer; font-weight: bold;">Set Password & Login</button>
+                </form>
+
+                <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+
+                <form action="/admin/trigger-reset" method="post" style="margin: 0;">
+                    <button type="submit" style="background-color: transparent; color: #008CBA; border: none; cursor: pointer; text-decoration: underline; font-size: 14px;">Didn't receive the code? Resend</button>
                 </form>
             </div>
         </body>
