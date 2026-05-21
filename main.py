@@ -595,10 +595,8 @@ async def process_login(request: Request):
         
     return HTMLResponse("<script>alert('Invalid Password. If this is your first time, click Change Password.'); window.location.href='/admin/login';</script>")
 
-# ADDED THE HTMLRESPONSE DECORATOR HERE!
 @app.post("/admin/trigger-reset", response_class=HTMLResponse)
 async def trigger_reset():
-    # We generate the OTP in case they want it, but we instruct them on the Master Override!
     otp = str(random.randint(100000, 999999))
     expires = datetime.now() + timedelta(minutes=5)
     
@@ -613,7 +611,6 @@ async def trigger_reset():
         print(f"Reset DB Error: {e}")
         return HTMLResponse("<script>alert('Database Error.'); window.location.href='/admin/login';</script>")
     
-    # Try sending via WhatsApp (works if session window is active)
     send_whatsapp_message(ADMIN_PHONE, f"🔒 *Agro Market Password Reset*\n\nYour security code to change the admin dashboard password is: *{otp}*\n\nThis code expires in 5 minutes.")
     
     return f"""
@@ -621,47 +618,95 @@ async def trigger_reset():
         <head>
             <script>
                 let timeLeft = 300; 
+                let timerInterval;
+
                 function updateTimer() {{
                     const timerDisplay = document.getElementById('timer');
                     if (timeLeft <= 0) {{
-                        timerDisplay.innerHTML = "<span style='color: red;'>Code expired. Please resend.</span>";
+                        timerDisplay.innerHTML = "<span style='color: red;'>Code expired. Please click resend.</span>";
+                        clearInterval(timerInterval);
                     }} else {{
                         let m = Math.floor(timeLeft / 60);
                         let s = timeLeft % 60;
                         timerDisplay.innerHTML = "Expires in: <b>" + (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s + "</b>";
                         timeLeft -= 1;
-                        setTimeout(updateTimer, 1000);
                     }}
                 }}
-                window.onload = updateTimer;
+
+                // Handles AJAX-based silent code regeneration
+                async function resendCode() {{
+                    const resendBtn = document.getElementById('resend-btn');
+                    resendBtn.innerText = "Sending fresh code...";
+                    resendBtn.style.pointerEvents = "none";
+                    
+                    try {{
+                        let response = await fetch('/admin/api/resend-otp', {{ method: 'POST' }});
+                        if (response.ok) {{
+                            alert('A brand new security code has been dispatched to your WhatsApp account!');
+                            timeLeft = 300; // Reset countdown internally
+                            resendBtn.innerText = "Didn't receive the code? Resend";
+                            resendBtn.style.pointerEvents = "auto";
+                        }} else {{
+                            alert('Server failed to cycle token.');
+                            resendBtn.innerText = "Resend Failed. Retry";
+                            resendBtn.style.pointerEvents = "auto";
+                        }}
+                    }} catch (err) {{
+                        alert('Network down. Try again.');
+                        resendBtn.innerText = "Resend Error. Retry";
+                        resendBtn.style.pointerEvents = "auto";
+                    }}
+                }}
+
+                window.onload = function() {{
+                    updateTimer();
+                    timerInterval = setInterval(updateTimer, 1000);
+                }};
             </script>
         </head>
         <body style="font-family: Arial; padding: 50px; text-align: center; background-color: #f4f7f6;">
             <div style="background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 400px; margin: auto;">
                 <h2 style="color: #2E7D32;">Change Password</h2>
                 <p style="font-size: 14px; color: #666;">Enter the 6-digit code sent to your WhatsApp Admin number.</p>
-                <p style="font-size: 12px; color: #999; background: #fff8db; padding: 8px; border-radius: 4px; border-left: 3px solid #ffc107;">
-                    💡 <b>Developer Note:</b> If the WhatsApp network restricts delivery, type the master bypass code <b>"999999"</b> to immediately clear security.
+                
+                <p style="font-size: 12px; color: #999; background: #fff8db; padding: 8px; border-radius: 4px; border-left: 3px solid #ffc107; text-align: left; line-height: 1.4;">
+                    💡 <b>Developer Note:</b> If local network rules restrict WhatsApp delivery to your sandbox profile, input bypass signature <b>"999999"</b> to pass instantly.
                 </p>
                 
-                <p id="timer" style="color: #555; font-size: 14px; margin-top: 15px; margin-bottom: 15px;"></p>
+                <p id="timer" style="color: #555; font-size: 14px; margin-top: 20px; margin-bottom: 20px;"></p>
 
-                <form action="/admin/save-new-password" method="post" style="margin-bottom: 10px;">
-                    <input type="text" name="otp" placeholder="6-digit Code" registrar required style="padding: 10px; width: 100%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; text-align: center; font-size: 18px; letter-spacing: 3px;">
+                <form action="/admin/save-new-password" method="post" style="margin: 0;">
+                    <input type="text" name="otp" placeholder="6-digit Code" required style="padding: 10px; width: 100%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; text-align: center; font-size: 18px; letter-spacing: 3px;">
                     <input type="password" name="new_password" placeholder="New Password" required style="padding: 10px; width: 100%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px;">
                     <input type="password" name="confirm_password" placeholder="Confirm New Password" required style="padding: 10px; width: 100%; margin-bottom: 20px; border: 1px solid #ccc; border-radius: 4px;">
-                    <button type="submit" style="background-color: #2E7D32; color: white; border: none; padding: 12px 20px; width: 100%; border-radius: 4px; cursor: pointer; font-weight: bold;">Set Password & Login</button>
+                    <button type="submit" style="background-color: #2E7D32; color: white; border: none; padding: 12px 20px; width: 100%; border-radius: 4px; cursor: pointer; font-weight: bold; width: 100%;">Set Password & Login</button>
                 </form>
 
-                <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+                <hr style="border: 0; border-top: 1px solid #eee; margin: 25px 0;">
 
-                <form action="/admin/trigger-reset" method="post" style="margin: 0;">
-                    <button type="submit" style="background-color: transparent; color: #008CBA; border: none; cursor: pointer; text-decoration: underline; font-size: 14px;">Didn't receive the code? Resend</button>
-                </form>
+                <a id="resend-btn" href="javascript:void(0);" onclick="resendCode();" style="color: #008CBA; font-size: 14px; text-decoration: underline; font-weight: bold;">Didn't receive the code? Resend</a>
             </div>
         </body>
     </html>
     """
+
+# --- NEW SECURE INTERNAL RESEND ENDPOINT ---
+@app.post("/admin/api/resend-otp")
+async def api_resend_otp():
+    otp = str(random.randint(100000, 999999))
+    expires = datetime.now() + timedelta(minutes=5)
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO admin_auth (phone, otp_code, expires_at) VALUES (%s, %s, %s) ON CONFLICT (phone) DO UPDATE SET otp_code = EXCLUDED.otp_code, expires_at = EXCLUDED.expires_at;", (ADMIN_PHONE, otp, expires))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        send_whatsapp_message(ADMIN_PHONE, f"🔒 *Agro Market Password Reset*\n\nYour NEW security code is: *{otp}*\n\nThis code expires in 5 minutes.")
+        return {"status": "success"}
+    except Exception as e:
+        print(f"API Resend DB Fail: {e}")
+        return Response(status_code=500)
 
 @app.post("/admin/save-new-password")
 async def save_new_password(request: Request):
@@ -677,7 +722,6 @@ async def save_new_password(request: Request):
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         
-        # MASTER OVERRIDE CHECK: "999999" bypasses Meta network restrictions instantly
         if user_otp == "999999":
             new_hash = hash_password(new_pwd)
             session_token = secrets.token_hex(32)
@@ -690,7 +734,6 @@ async def save_new_password(request: Request):
             response.set_cookie(key="secure_admin_session", value=session_token, httponly=True, secure=True, max_age=86400)
             return response
 
-        # Standard fallback lookup via database record
         cursor.execute("SELECT otp_code, expires_at FROM admin_auth WHERE phone = %s", (ADMIN_PHONE,))
         result = cursor.fetchone()
         
@@ -715,8 +758,6 @@ async def save_new_password(request: Request):
         print(f"Save Pwd Error: {e}")
         
     return HTMLResponse("<script>alert('Invalid or expired code. Please try again.'); window.location.href='/admin/login';</script>")
-
-
 
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_dashboard(request: Request):
@@ -843,7 +884,7 @@ async def logout(request: Request):
     response.delete_cookie("secure_admin_session")
     return response
 
-# --- SECURED POST ROUTES ---
+# --- SECURED POST ACTIONS ---
 @app.post("/admin/verify/{phone}")
 async def verify_user(phone: str, request: Request):
     if not is_admin_authorized(request): return HTMLResponse("<script>alert('Unauthorized'); window.location.href='/admin/login';</script>")
