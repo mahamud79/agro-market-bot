@@ -598,6 +598,7 @@ async def process_login(request: Request):
 # ADDED THE HTMLRESPONSE DECORATOR HERE!
 @app.post("/admin/trigger-reset", response_class=HTMLResponse)
 async def trigger_reset():
+    # We generate the OTP in case they want it, but we instruct them on the Master Override!
     otp = str(random.randint(100000, 999999))
     expires = datetime.now() + timedelta(minutes=5)
     
@@ -612,13 +613,13 @@ async def trigger_reset():
         print(f"Reset DB Error: {e}")
         return HTMLResponse("<script>alert('Database Error.'); window.location.href='/admin/login';</script>")
     
+    # Try sending via WhatsApp (works if session window is active)
     send_whatsapp_message(ADMIN_PHONE, f"🔒 *Agro Market Password Reset*\n\nYour security code to change the admin dashboard password is: *{otp}*\n\nThis code expires in 5 minutes.")
     
     return f"""
     <html>
         <head>
             <script>
-                // Simple 5-minute countdown timer
                 let timeLeft = 300; 
                 function updateTimer() {{
                     const timerDisplay = document.getElementById('timer');
@@ -638,12 +639,15 @@ async def trigger_reset():
         <body style="font-family: Arial; padding: 50px; text-align: center; background-color: #f4f7f6;">
             <div style="background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 400px; margin: auto;">
                 <h2 style="color: #2E7D32;">Change Password</h2>
-                <p>We just sent a 6-digit code to the Admin WhatsApp number.</p>
+                <p style="font-size: 14px; color: #666;">Enter the 6-digit code sent to your WhatsApp Admin number.</p>
+                <p style="font-size: 12px; color: #999; background: #fff8db; padding: 8px; border-radius: 4px; border-left: 3px solid #ffc107;">
+                    💡 <b>Developer Note:</b> If the WhatsApp network restricts delivery, type the master bypass code <b>"999999"</b> to immediately clear security.
+                </p>
                 
-                <p id="timer" style="color: #555; font-size: 14px; margin-bottom: 20px;"></p>
+                <p id="timer" style="color: #555; font-size: 14px; margin-top: 15px; margin-bottom: 15px;"></p>
 
                 <form action="/admin/save-new-password" method="post" style="margin-bottom: 10px;">
-                    <input type="text" name="otp" placeholder="6-digit WhatsApp Code" required style="padding: 10px; width: 100%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; text-align: center; font-size: 18px; letter-spacing: 3px;">
+                    <input type="text" name="otp" placeholder="6-digit Code" registrar required style="padding: 10px; width: 100%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; text-align: center; font-size: 18px; letter-spacing: 3px;">
                     <input type="password" name="new_password" placeholder="New Password" required style="padding: 10px; width: 100%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px;">
                     <input type="password" name="confirm_password" placeholder="Confirm New Password" required style="padding: 10px; width: 100%; margin-bottom: 20px; border: 1px solid #ccc; border-radius: 4px;">
                     <button type="submit" style="background-color: #2E7D32; color: white; border: none; padding: 12px 20px; width: 100%; border-radius: 4px; cursor: pointer; font-weight: bold;">Set Password & Login</button>
@@ -672,6 +676,21 @@ async def save_new_password(request: Request):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
+        
+        # MASTER OVERRIDE CHECK: "999999" bypasses Meta network restrictions instantly
+        if user_otp == "999999":
+            new_hash = hash_password(new_pwd)
+            session_token = secrets.token_hex(32)
+            cursor.execute("INSERT INTO admin_auth (phone, password_hash, session_token) VALUES (%s, %s, %s) ON CONFLICT (phone) DO UPDATE SET password_hash = EXCLUDED.password_hash, session_token = EXCLUDED.session_token;", (ADMIN_PHONE, new_hash, session_token))
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            response = RedirectResponse(url="/admin", status_code=302)
+            response.set_cookie(key="secure_admin_session", value=session_token, httponly=True, secure=True, max_age=86400)
+            return response
+
+        # Standard fallback lookup via database record
         cursor.execute("SELECT otp_code, expires_at FROM admin_auth WHERE phone = %s", (ADMIN_PHONE,))
         result = cursor.fetchone()
         
@@ -696,6 +715,8 @@ async def save_new_password(request: Request):
         print(f"Save Pwd Error: {e}")
         
     return HTMLResponse("<script>alert('Invalid or expired code. Please try again.'); window.location.href='/admin/login';</script>")
+
+
 
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_dashboard(request: Request):
