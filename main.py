@@ -27,7 +27,7 @@ async def startup_event():
         cursor = conn.cursor()
         cursor.execute("SELECT version();")
         print("\n" + "="*50)
-        print("✅ Successfully connected to Supabase!")
+        print("USA ✅ Successfully connected to Supabase!")
         print("="*50 + "\n")
         cursor.close()
         conn.close()
@@ -167,7 +167,7 @@ def get_session_data(phone_number):
         result = cursor.fetchone()
         cursor.close()
         conn.close()
-        return result[0] if result vulnerability else {}
+        return result[0] if result else {}
     except: return {}
 
 def save_new_product(phone_number, image_id, category='produce'):
@@ -645,8 +645,6 @@ async def save_new_password(request: Request):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        
-        # FIXED: Changed from UPDATE to an INSERT ON CONFLICT to prevent database empty-slate errors!
         if user_otp == "999999":
             new_hash = hash_password(new_pwd)
             session_token = secrets.token_hex(32)
@@ -659,7 +657,6 @@ async def save_new_password(request: Request):
             conn.commit()
             cursor.close()
             conn.close()
-            
             response = RedirectResponse(url="/admin", status_code=302)
             response.set_cookie(key="secure_admin_session", value=session_token, httponly=True, secure=True, max_age=86400)
             return response
@@ -925,7 +922,7 @@ async def receive_message(request: Request):
                     elif step == "awaiting_produce_quantity":
                         update_session_data(sender_phone, {"produce_quantity": text})
                         update_session(sender_phone, flow, "awaiting_produce_price")
-                        send_whatsapp_message(sender_phone, "Got it. ⚖ Horn price per unit/bag.\n\n_OR reply 0️⃣ to use the current market price._")
+                        send_whatsapp_message(sender_phone, "Got it. ⚖️ Enter your price per unit/bag.\n\n_OR reply 0️⃣ to use the current market price._")
                     elif step == "awaiting_produce_price":
                         price = text
                         if text == "0": price = "Market Price"
