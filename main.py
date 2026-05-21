@@ -451,40 +451,6 @@ def delete_market_price(price_id):
         return True
     except: return False
 
-def get_pending_verifications():
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        cursor.execute("SELECT name, phone, role, nin_number FROM users WHERE nin_status = 'pending' AND role != 'role_buyer'")
-        results = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        return []
-    except: return []
-
-def approve_user_nin(phone_number):
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        cursor.execute("UPDATE users SET nin_status = 'verified' WHERE phone = %s", (phone_number,))
-        conn.commit()
-        cursor.close()
-        conn.close()
-        return True
-    except: return False
-
-def reject_user_nin(phone_number):
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM users WHERE phone = %s", (phone_number,))
-        cursor.execute("DELETE FROM user_sessions WHERE phone = %s", (phone_number,))
-        conn.commit()
-        cursor.close()
-        conn.close()
-        return True
-    except: return False
-
 def get_dashboard_stats():
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -504,9 +470,6 @@ def get_dashboard_stats():
 # ========================================================
 # SECURE ADMIN WEB DASHBOARD ROUTES (PASSWORD + OTP RESET)
 # ========================================================
-
-def hash_password(password: str):
-    return hashlib.sha256(password.encode('utf-8')).hexdigest()
 
 def is_admin_authorized(request: Request):
     session_cookie = request.cookies.get("secure_admin_session")
@@ -587,23 +550,7 @@ async def trigger_reset():
     
     return f"""
     <html>
-        <body style="font-family: Arial; padding: 50px; text-align: center; background-color: #f4f7f6;">
-            <div style="background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 400px; margin: auto;">
-                <h2 style="color: #2E7D32;">Change Password</h2>
-                <p style="font-size: 14px; color: #666;">Enter the 6-digit code sent to your WhatsApp Admin number.</p>
-                <p style="font-size: 12px; color: #999; background: #fff8db; padding: 8px; border-radius: 4px; border-left: 3px solid #ffc107; text-align: left; line-height: 1.4;">
-                    💡 <b>Developer Note:</b> If local network rules restrict WhatsApp delivery to your sandbox profile, input bypass signature <b>"999999"</b> to pass instantly.
-                </p>
-                <p id="timer" style="color: #555; font-size: 14px; margin-top: 20px; margin-bottom: 20px;"></p>
-                <form action="/admin/save-new-password" method="post" style="margin: 0;">
-                    <input type="text" name="otp" placeholder="6-digit Code" required style="padding: 10px; width: 100%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; text-align: center; font-size: 18px; letter-spacing: 3px;">
-                    <input type="password" name="new_password" placeholder="New Password" required style="padding: 10px; width: 100%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px;">
-                    <input type="password" name="confirm_password" placeholder="Confirm New Password" required style="padding: 10px; width: 100%; margin-bottom: 20px; border: 1px solid #ccc; border-radius: 4px;">
-                    <button type="submit" style="background-color: #2E7D32; color: white; border: none; padding: 12px 20px; border-radius: 4px; cursor: pointer; font-weight: bold; width: 100%;">Set Password & Login</button>
-                </form>
-                <hr style="border: 0; border-top: 1px solid #eee; margin: 25px 0;">
-                <a id="resend-btn" href="javascript:void(0);" onclick="resendCode();" style="color: #008CBA; font-size: 14px; text-decoration: underline; font-weight: bold;">Didn't receive the code? Resend</a>
-            </div>
+        <head>
             <script>
                 let timeLeft = 300; 
                 let timerInterval;
@@ -646,6 +593,24 @@ async def trigger_reset():
                     timerInterval = setInterval(updateTimer, 1000);
                 }};
             </script>
+        </head>
+        <body style="font-family: Arial; padding: 50px; text-align: center; background-color: #f4f7f6;">
+            <div style="background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 400px; margin: auto;">
+                <h2 style="color: #2E7D32;">Change Password</h2>
+                <p style="font-size: 14px; color: #666;">Enter the 6-digit code sent to your WhatsApp Admin number.</p>
+                <p style="font-size: 12px; color: #999; background: #fff8db; padding: 8px; border-radius: 4px; border-left: 3px solid #ffc107; text-align: left; line-height: 1.4;">
+                    💡 <b>Developer Note:</b> If local network rules restrict WhatsApp delivery to your sandbox profile, input bypass signature <b>"999999"</b> to pass instantly.
+                </p>
+                <p id="timer" style="color: #555; font-size: 14px; margin-top: 20px; margin-bottom: 20px;"></p>
+                <form action="/admin/save-new-password" method="post" style="margin: 0;">
+                    <input type="text" name="otp" placeholder="6-digit Code" required style="padding: 10px; width: 100%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; text-align: center; font-size: 18px; letter-spacing: 3px;">
+                    <input type="password" name="new_password" placeholder="New Password" required style="padding: 10px; width: 100%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px;">
+                    <input type="password" name="confirm_password" placeholder="Confirm New Password" required style="padding: 10px; width: 100%; margin-bottom: 20px; border: 1px solid #ccc; border-radius: 4px;">
+                    <button type="submit" style="background-color: #2E7D32; color: white; border: none; padding: 12px 20px; border-radius: 4px; cursor: pointer; font-weight: bold; width: 100%;">Set Password & Login</button>
+                </form>
+                <hr style="border: 0; border-top: 1px solid #eee; margin: 25px 0;">
+                <a id="resend-btn" href="javascript:void(0);" onclick="resendCode();" style="color: #008CBA; font-size: 14px; text-decoration: underline; font-weight: bold;">Didn't receive the code? Resend</a>
+            </div>
         </body>
     </html>
     """
@@ -713,7 +678,6 @@ async def save_new_password(request: Request):
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_dashboard(request: Request):
     if not is_admin_authorized(request): return RedirectResponse(url="/admin/login")
-    pending_users = get_pending_verifications()
     market_prices = get_market_prices(include_id=True)
     stats = get_dashboard_stats()
     
@@ -751,42 +715,15 @@ async def admin_dashboard(request: Request):
             <h1>🛡️ Agro Market Admin Dashboard</h1>
             <div class="stats-container">
                 <div class="stat-card">
-                    <h3>👥 Total Users</h3><p>{{stats['total_users']}}</p>
+                    <h3>👥 Total Users</h3><p>{stats['total_users']}</p>
                 </div>
                 <div class="stat-card">
-                    <h3>🛒 Active Orders</h3><p>{{stats['active_orders']}}</p>
+                    <h3>🛒 Active Orders</h3><p>{stats['active_orders']}</p>
                 </div>
                 <div class="stat-card">
-                    <h3>✅ Total Deliveries</h3><p>{{stats['total_deliveries']}}</p>
+                    <h3>✅ Total Deliveries</h3><p>{stats['total_deliveries']}</p>
                 </div>
             </div>
-            <h2>⏳ Pending User Verifications</h2>
-            <table>
-                <tr>
-                    <th>Full Name</th><th>Phone Number</th><th>Requested Role</th><th>NIN Number</th><th>Action</th>
-                </tr>
-    """
-    if not pending_users:
-        html_content += "<tr><td colspan='5' class='empty'>No pending verifications at this time.</td></tr>"
-    else:
-        for u in pending_users:
-            name, phone, role, nin = u
-            display_role = role.replace("role_", "").capitalize()
-            html_content += f"""
-                <tr>
-                    <td>{{name}}</td><td>{{phone}}</td><td>{{display_role}}</td><td><b>{{nin}}</b></td>
-                    <td>
-                        <form action="/admin/verify/{{phone}}" method="post" class="action-form">
-                            <button type="submit" class="btn btn-approve">✅ Approve</button>
-                        </form>
-                        <form action="/admin/reject/{{phone}}" method="post" class="action-form" onsubmit="return confirm('Are you sure you want to completely reject and delete this user?');">
-                            <button type="submit" class="btn btn-reject">❌ Reject</button>
-                        </form>
-                    </td>
-                </tr>
-            """
-    html_content += """
-            </table>
             <h2>📈 Daily Market Price Management</h2>
             <table>
                 <tr>
@@ -800,9 +737,9 @@ async def admin_dashboard(request: Request):
             p_id, crop, loc, price = p
             html_content += f"""
                 <tr>
-                    <td>{{crop}}</td><td>{{loc}}</td><td><b>{{price}}</b></td>
+                    <td>{crop}</td><td>{loc}</td><td><b>{price}</b></td>
                     <td>
-                        <form action="/admin/price/delete/{{p_id}}" method="post" class="action-form">
+                        <form action="/admin/price/delete/{p_id}" method="post" class="action-form">
                             <button type="submit" class="btn btn-reject">🗑️ Remove</button>
                         </form>
                     </td>
