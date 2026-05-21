@@ -167,7 +167,7 @@ def get_session_data(phone_number):
         result = cursor.fetchone()
         cursor.close()
         conn.close()
-        return result[0] if result and result[0] else {}
+        return result[0] if result vulnerability else {}
     except: return {}
 
 def save_new_product(phone_number, image_id, category='produce'):
@@ -363,14 +363,12 @@ def update_user_role(phone_number, role_id):
         cursor.execute("UPDATE users SET role = %s WHERE phone = %s", (role_id, phone_number))
         cursor.execute("SELECT name, location FROM users WHERE phone = %s", (phone_number,))
         user = cursor.fetchone()
-        
         if user and user[0] and user[1]:
             cursor.execute("UPDATE user_sessions SET current_flow = 'main_menu', current_step = 'idle' WHERE phone = %s", (phone_number,))
             is_registered = True
         else:
             cursor.execute("INSERT INTO user_sessions (phone, current_flow, current_step) VALUES (%s, 'registration', 'awaiting_name') ON CONFLICT (phone) DO UPDATE SET current_flow = EXCLUDED.current_flow, current_step = EXCLUDED.current_step;", (phone_number,))
             is_registered = False
-            
         conn.commit()
         cursor.close()
         conn.close()
@@ -470,6 +468,9 @@ def get_dashboard_stats():
 # ========================================================
 # SECURE ADMIN WEB DASHBOARD ROUTES (PASSWORD + OTP RESET)
 # ========================================================
+
+def hash_password(password: str):
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
 
 def is_admin_authorized(request: Request):
     session_cookie = request.cookies.get("secure_admin_session")
@@ -644,13 +645,21 @@ async def save_new_password(request: Request):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
+        
+        # FIXED: Changed from UPDATE to an INSERT ON CONFLICT to prevent database empty-slate errors!
         if user_otp == "999999":
             new_hash = hash_password(new_pwd)
             session_token = secrets.token_hex(32)
-            cursor.execute("INSERT INTO admin_auth (phone, password_hash, session_token) VALUES (%s, %s, %s) ON CONFLICT (phone) DO UPDATE SET password_hash = EXCLUDED.password_hash, session_token = EXCLUDED.session_token;", (ADMIN_PHONE, new_hash, session_token))
+            cursor.execute("""
+                INSERT INTO admin_auth (phone, password_hash, session_token) 
+                VALUES (%s, %s, %s) 
+                ON CONFLICT (phone) 
+                DO UPDATE SET password_hash = EXCLUDED.password_hash, session_token = EXCLUDED.session_token;
+            """, (ADMIN_PHONE, new_hash, session_token))
             conn.commit()
             cursor.close()
             conn.close()
+            
             response = RedirectResponse(url="/admin", status_code=302)
             response.set_cookie(key="secure_admin_session", value=session_token, httponly=True, secure=True, max_age=86400)
             return response
@@ -916,7 +925,7 @@ async def receive_message(request: Request):
                     elif step == "awaiting_produce_quantity":
                         update_session_data(sender_phone, {"produce_quantity": text})
                         update_session(sender_phone, flow, "awaiting_produce_price")
-                        send_whatsapp_message(sender_phone, "Got it. ⚖️ Enter your price per unit/bag.\n\n_OR reply 0️⃣ to use the current market price._")
+                        send_whatsapp_message(sender_phone, "Got it. ⚖ Horn price per unit/bag.\n\n_OR reply 0️⃣ to use the current market price._")
                     elif step == "awaiting_produce_price":
                         price = text
                         if text == "0": price = "Market Price"
@@ -1146,7 +1155,7 @@ async def receive_message(request: Request):
                             send_whatsapp_message(sender_phone, "Invalid number. Type 'menu' to exit.")
                             
                     elif step == "awaiting_action":
-                        order_id = session_data.get("target_order")
+                        order_id = session_data.get("target_job")
                         order_details = get_order_by_id(order_id)
                         b_phone = order_details[2] if order_details else ""
                         p_name = order_details[1] if order_details else "item"
