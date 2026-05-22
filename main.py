@@ -485,6 +485,9 @@ def get_dashboard_stats():
 # SECURE ADMIN WEB DASHBOARD ROUTES
 # ========================================================
 
+def hash_password(password: str):
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
 def is_admin_authorized(request: Request):
     session_cookie = request.cookies.get("secure_admin_session")
     if not session_cookie: return False
@@ -519,49 +522,14 @@ async def login_page():
 async def process_login(request: Request):
     form_data = await request.form()
     password = form_data.get("password")
+    
     try:
-        raw_input = str(password).strip()
-        
-        # BULLETPROOF PLAINTEXT BYPASS: Stripped special characters to completely eliminate 
-        # browser URL form-encoding bugs and string validation drops!
-        if raw_input == "AgroAdmin2026" or "%21" in raw_input or "AgroAdmin" in raw_input:
-            session_token = secrets.token_hex(32)
-            
-            # Auto-sync repair entry down to Supabase to establish an encrypted production fallback
-            try:
-                conn = psycopg2.connect(DATABASE_URL)
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT INTO admin_auth (phone, password_hash, session_token) 
-                    VALUES (%s, %s, %s) 
-                    ON CONFLICT (phone) 
-                    DO UPDATE SET session_token = EXCLUDED.session_token, password_hash = EXCLUDED.password_hash;
-                """, (str(ADMIN_PHONE), hash_password("AgroAdmin2026!"), session_token))
-                conn.commit()
-                cursor.close()
-                conn.close()
-            except Exception as db_sync_err:
-                print(f"Bypass DB sync warning: {db_sync_err}")
-                session_token = "emergency_token_bypass_active"
-
-            response = RedirectResponse(url="/admin", status_code=302)
-            response.delete_cookie("secure_admin_session")
-            # Enforce Lax cookie parameters so the browser saves it over Render's proxy immediately
-            response.set_cookie(
-                key="secure_admin_session", 
-                value=session_token, 
-                httponly=True, 
-                secure=False, 
-                samesite="lax", 
-                max_age=86400
-            )
-            return response
-
-        # Standard Hashed Database Verification Fallback
+        # PURE DATABASE VERIFICATION ONLY (No hardcoded passwords)
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         cursor.execute("SELECT password_hash FROM admin_auth WHERE phone = %s", (str(ADMIN_PHONE),))
         result = cursor.fetchone()
+        
         if result and result[0]:
             db_hash = result[0]
             if hash_password(password) == db_hash:
@@ -573,12 +541,20 @@ async def process_login(request: Request):
                 
                 response = RedirectResponse(url="/admin", status_code=302)
                 response.delete_cookie("secure_admin_session")
-                response.set_cookie(key="secure_admin_session", value=session_token, httponly=True, secure=False, samesite="lax", max_age=86400)
+                response.set_cookie(
+                    key="secure_admin_session", 
+                    value=session_token, 
+                    httponly=True, 
+                    secure=False, 
+                    samesite="lax", 
+                    max_age=86400
+                )
                 return response
+                
         cursor.close()
         conn.close()
     except Exception as e:
-        print(f"Login structural check error: {e}")
+        print(f"Login Database Check Error: {e}")
         
     return HTMLResponse("<script>alert('Invalid Password.'); window.location.href='/admin/login';</script>")
 
