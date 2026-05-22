@@ -21,15 +21,31 @@ PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 ADMIN_PHONE = os.getenv("ADMIN_PHONE")
 MONIME_SECRET_KEY = os.getenv("MONIME_SECRET_KEY")
 
+# @app.on_event("startup")
+# async def startup_event():
+#     try:
+#         conn = psycopg2.connect(DATABASE_URL)
+#         cursor = conn.cursor()
+#         cursor.execute("SELECT version();")
+#         print("\n" + "="*50)
+#         print("✅ Successfully connected to Supabase!")
+#         print("="*50 + "\n")
+#         cursor.close()
+#         conn.close()
+#     except Exception as e:
+#         print(f"❌ Database connection failed: {e}")
+
 @app.on_event("startup")
 async def startup_event():
+    # DEBUG: Generate the correct hash and print it to your Render logs!
+    my_password = "agromarketbot99"
+    correct_hash = hash_password(my_password)
+    print(f"\n\n🚨 DEBUG INFO: Password '{my_password}' must hash to: {correct_hash} 🚨\n\n")
+    
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        cursor.execute("SELECT version();")
-        print("\n" + "="*50)
-        print("✅ Successfully connected to Supabase!")
-        print("="*50 + "\n")
+        print("✅ Connected to Supabase!")
         cursor.close()
         conn.close()
     except Exception as e:
@@ -518,42 +534,73 @@ async def login_page():
     </html>
     """
 
+# @app.post("/admin/process-login")
+# async def process_login(request: Request):
+#     form_data = await request.form()
+#     password = form_data.get("password")
+#     calculated_hash = hash_password(password)
+    
+#     try:
+#         conn = psycopg2.connect(DATABASE_URL)
+#         cursor = conn.cursor()
+#         cursor.execute("SELECT password_hash FROM admin_auth WHERE phone = %s", (str(ADMIN_PHONE),))
+#         result = cursor.fetchone()
+        
+#         # LOGGING: Print both to Render logs so we can see the exact difference
+#         print(f"DEBUG LOGIN: Input={password} | Calculated Hash={calculated_hash}")
+#         if result:
+#             print(f"DEBUG LOGIN: DB Hash={result[0]}")
+        
+#         if result and result[0] and result[0] == calculated_hash:
+#             session_token = secrets.token_hex(32)
+#             cursor.execute("UPDATE admin_auth SET session_token = %s WHERE phone = %s", (session_token, str(ADMIN_PHONE)))
+#             conn.commit()
+#             cursor.close()
+#             conn.close()
+            
+#             response = RedirectResponse(url="/admin", status_code=302)
+#             response.delete_cookie("secure_admin_session")
+#             response.set_cookie(key="secure_admin_session", value=session_token, httponly=True, secure=False, samesite="lax", max_age=86400)
+#             return response
+        
+#         cursor.close()
+#         conn.close()
+#     except Exception as e:
+#         print(f"Login Database Check Error: {e}")
+        
+#     return HTMLResponse("<script>alert('Invalid Password.'); window.location.href='/admin/login';</script>")
+
 @app.post("/admin/process-login")
 async def process_login(request: Request):
     form_data = await request.form()
     password = form_data.get("password")
-    calculated_hash = hash_password(password)
     
+    # MAGIC LOGIN BYPASS (Temporary for fixing this)
+    if password == "12345":
+        session_token = secrets.token_hex(32)
+        response = RedirectResponse(url="/admin", status_code=302)
+        response.set_cookie(key="secure_admin_session", value=session_token, httponly=True, secure=False, samesite="lax", max_age=86400)
+        return response
+
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         cursor.execute("SELECT password_hash FROM admin_auth WHERE phone = %s", (str(ADMIN_PHONE),))
         result = cursor.fetchone()
-        
-        # LOGGING: Print both to Render logs so we can see the exact difference
-        print(f"DEBUG LOGIN: Input={password} | Calculated Hash={calculated_hash}")
-        if result:
-            print(f"DEBUG LOGIN: DB Hash={result[0]}")
-        
-        if result and result[0] and result[0] == calculated_hash:
+        if result and hash_password(password) == result[0]:
             session_token = secrets.token_hex(32)
             cursor.execute("UPDATE admin_auth SET session_token = %s WHERE phone = %s", (session_token, str(ADMIN_PHONE)))
             conn.commit()
             cursor.close()
             conn.close()
-            
             response = RedirectResponse(url="/admin", status_code=302)
-            response.delete_cookie("secure_admin_session")
             response.set_cookie(key="secure_admin_session", value=session_token, httponly=True, secure=False, samesite="lax", max_age=86400)
             return response
-        
         cursor.close()
         conn.close()
     except Exception as e:
-        print(f"Login Database Check Error: {e}")
-        
+        print(f"Error: {e}")
     return HTMLResponse("<script>alert('Invalid Password.'); window.location.href='/admin/login';</script>")
-    
 
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_dashboard(request: Request):
