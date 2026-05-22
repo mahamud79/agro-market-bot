@@ -523,28 +523,34 @@ async def process_login(request: Request):
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         
-        # Look up the row strictly against the Supabase phone string
-        cursor.execute("SELECT password_hash FROM admin_auth WHERE phone = %s", (str(ADMIN_PHONE),))
-        result = cursor.fetchone()
+        # FIXED: We use TRIM() and character casting to guarantee a match,
+        # completely bypassing hidden whitespaces or data type differences!
+        cursor.execute("""
+            SELECT password_hash FROM admin_auth 
+            WHERE TRIM(phone::varchar) = TRIM(%s::varchar);
+        """, (str(ADMIN_PHONE),))
         
+        result = cursor.fetchone()
         if result and result[0]:
             db_hash = result[0]
             if hash_password(password) == db_hash:
                 session_token = secrets.token_hex(32)
-                cursor.execute("UPDATE admin_auth SET session_token = %s WHERE phone = %s", (session_token, str(ADMIN_PHONE)))
+                cursor.execute("""
+                    UPDATE admin_auth 
+                    SET session_token = %s 
+                    WHERE TRIM(phone::varchar) = TRIM(%s::varchar);
+                """, (session_token, str(ADMIN_PHONE)))
                 conn.commit()
                 cursor.close()
                 conn.close()
                 
                 response = RedirectResponse(url="/admin", status_code=302)
-                
-                # FIXED: Stripped secure constraints completely to enforce direct local cookie acceptance on cloud network proxies
-                response.delete_cookie("secure_admin_session") # Clear any old broken cookies first
+                response.delete_cookie("secure_admin_session")
                 response.set_cookie(
                     key="secure_admin_session", 
                     value=session_token, 
                     httponly=True, 
-                    secure=False,  # Enforces cookie acceptance across Render's internal forwarding setup
+                    secure=False, 
                     samesite="lax", 
                     max_age=86400
                 )
@@ -552,7 +558,7 @@ async def process_login(request: Request):
         cursor.close()
         conn.close()
     except Exception as e:
-        print(f"Login Verification Error: {e}")
+        print(f"Login Type Validation Error: {e}")
         
     return HTMLResponse("<script>alert('Invalid Password.'); window.location.href='/admin/login';</script>")
 
