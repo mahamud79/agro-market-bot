@@ -483,23 +483,34 @@ async def process_login(request: Request):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        cursor.execute("SELECT password_hash FROM admin_auth WHERE phone = %s", (ADMIN_PHONE,))
+        
+
+        cursor.execute("""
+            SELECT password_hash FROM admin_auth 
+            WHERE phone = %s 
+               OR phone = (CASE WHEN %s ~ '^[0-9]+$' THEN %s ELSE '-1' END);
+        """, (str(ADMIN_PHONE), str(ADMIN_PHONE), str(ADMIN_PHONE)))
+        
         result = cursor.fetchone()
         if result and result[0]:
             db_hash = result[0]
             if hash_password(password) == db_hash:
                 session_token = secrets.token_hex(32)
-                cursor.execute("UPDATE admin_auth SET session_token = %s WHERE phone = %s", (session_token, ADMIN_PHONE))
+                cursor.execute("UPDATE admin_auth SET session_token = %s WHERE phone = %s OR phone = (CASE WHEN %s ~ '^[0-9]+$' THEN %s ELSE '-1' END);", 
+                               (session_token, str(ADMIN_PHONE), str(ADMIN_PHONE), str(ADMIN_PHONE)))
                 conn.commit()
                 cursor.close()
                 conn.close()
+                
                 response = RedirectResponse(url="/admin", status_code=302)
                 response.set_cookie(key="secure_admin_session", value=session_token, httponly=True, secure=True, max_age=86400)
                 return response
+                
         cursor.close()
         conn.close()
     except Exception as e:
-        print(f"Login Error: {e}")
+        print(f"Login Type Processing Error: {e}")
+        
     return HTMLResponse("<script>alert('Invalid Password.'); window.location.href='/admin/login';</script>")
 
 @app.get("/admin", response_class=HTMLResponse)
