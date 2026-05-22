@@ -522,41 +522,38 @@ async def login_page():
 async def process_login(request: Request):
     form_data = await request.form()
     password = form_data.get("password")
+    calculated_hash = hash_password(password)
     
     try:
-        # PURE DATABASE VERIFICATION ONLY (No hardcoded passwords)
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         cursor.execute("SELECT password_hash FROM admin_auth WHERE phone = %s", (str(ADMIN_PHONE),))
         result = cursor.fetchone()
         
-        if result and result[0]:
-            db_hash = result[0]
-            if hash_password(password) == db_hash:
-                session_token = secrets.token_hex(32)
-                cursor.execute("UPDATE admin_auth SET session_token = %s WHERE phone = %s", (session_token, str(ADMIN_PHONE)))
-                conn.commit()
-                cursor.close()
-                conn.close()
-                
-                response = RedirectResponse(url="/admin", status_code=302)
-                response.delete_cookie("secure_admin_session")
-                response.set_cookie(
-                    key="secure_admin_session", 
-                    value=session_token, 
-                    httponly=True, 
-                    secure=False, 
-                    samesite="lax", 
-                    max_age=86400
-                )
-                return response
-                
+        # LOGGING: Print both to Render logs so we can see the exact difference
+        print(f"DEBUG LOGIN: Input={password} | Calculated Hash={calculated_hash}")
+        if result:
+            print(f"DEBUG LOGIN: DB Hash={result[0]}")
+        
+        if result and result[0] and result[0] == calculated_hash:
+            session_token = secrets.token_hex(32)
+            cursor.execute("UPDATE admin_auth SET session_token = %s WHERE phone = %s", (session_token, str(ADMIN_PHONE)))
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            response = RedirectResponse(url="/admin", status_code=302)
+            response.delete_cookie("secure_admin_session")
+            response.set_cookie(key="secure_admin_session", value=session_token, httponly=True, secure=False, samesite="lax", max_age=86400)
+            return response
+        
         cursor.close()
         conn.close()
     except Exception as e:
         print(f"Login Database Check Error: {e}")
         
     return HTMLResponse("<script>alert('Invalid Password.'); window.location.href='/admin/login';</script>")
+    
 
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_dashboard(request: Request):
