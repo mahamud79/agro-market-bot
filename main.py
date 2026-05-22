@@ -310,8 +310,13 @@ def get_delivery_details(order_id):
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT o.id, o.product_name, f.name AS farmer_name, f.location AS farmer_loc, f.phone AS farmer_phone, b.name AS buyer_name, b.location AS buyer_loc, b.phone AS buyer_phone
-            FROM orders o JOIN users f ON o.farmer_phone = f.phone JOIN users b ON o.buyer_phone = b.phone WHERE o.id = %s
+            SELECT o.id, o.product_name, f.name AS farmer_name, f.location AS farmer_loc, f.phone AS farmer_phone, 
+                   b.name AS buyer_name, b.location AS buyer_loc, b.phone AS buyer_phone, o.payment_method, p.price, p.quantity
+            FROM orders o 
+            JOIN users f ON o.farmer_phone = f.phone 
+            JOIN users b ON o.buyer_phone = b.phone 
+            LEFT JOIN products p ON o.product_id = p.id
+            WHERE o.id = %s
         """, (order_id,))
         result = cursor.fetchone()
         cursor.close()
@@ -466,7 +471,7 @@ def get_dashboard_stats():
         return {"total_users": 0, "active_orders": 0, "total_deliveries": 0}
 
 # ========================================================
-# SECURE ADMIN WEB DASHBOARD ROUTES (PASSWORD + OTP RESET)
+# SECURE ADMIN WEB DASHBOARD ROUTES (CLEAN STATIC PASSWORD)
 # ========================================================
 
 def hash_password(password: str):
@@ -493,13 +498,9 @@ async def login_page():
         <body style="font-family: Arial; padding: 50px; text-align: center; background-color: #f4f7f6;">
             <div style="background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 400px; margin: auto;">
                 <h2 style="color: #2E7D32;">Admin Login</h2>
-                <form action="/admin/process-login" method="post">
+                <form action="/admin/process-login" method="post" style="margin: 0;">
                     <input type="password" name="password" placeholder="Enter Password" required style="padding: 10px; width: 100%; margin-bottom: 20px; border: 1px solid #ccc; border-radius: 4px;">
                     <button type="submit" style="background-color: #2E7D32; color: white; border: none; padding: 12px 20px; width: 100%; border-radius: 4px; cursor: pointer; font-weight: bold; width:100%;">Login</button>
-                </form>
-                <hr style="border: 0; border-top: 1px solid #eee; margin: 25px 0;">
-                <form action="/admin/trigger-reset" method="post" style="margin:0;">
-                    <button type="submit" style="background-color: transparent; color: #555; border: none; cursor: pointer; text-decoration: underline;">Change / Forgot Password?</button>
                 </form>
             </div>
         </body>
@@ -530,167 +531,7 @@ async def process_login(request: Request):
         conn.close()
     except Exception as e:
         print(f"Login Error: {e}")
-    return HTMLResponse("<script>alert('Invalid Password. If this is your first time, click Change Password.'); window.location.href='/admin/login';</script>")
-
-@app.post("/admin/trigger-reset", response_class=HTMLResponse)
-async def trigger_reset():
-    otp = str(random.randint(100000, 999999))
-    expires = datetime.now() + timedelta(minutes=5)
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO admin_auth (phone, otp_code, expires_at) VALUES (%s, %s, %s) ON CONFLICT (phone) DO UPDATE SET otp_code = EXCLUDED.otp_code, expires_at = EXCLUDED.expires_at;", (ADMIN_PHONE, otp, expires))
-        conn.commit()
-        cursor.close()
-        conn.close()
-    except Exception as e:
-        print(f"Reset DB Error: {e}")
-        return HTMLResponse("<script>alert('Database Error.'); window.location.href='/admin/login';</script>")
-    
-    send_whatsapp_message(ADMIN_PHONE, f"🔒 *Agro Market Password Reset*\n\nYour security code to change the admin dashboard password is: *{otp}*\n\nThis code expires in 5 minutes.")
-    
-    return f"""
-    <html>
-        <head>
-            <script>
-                let timeLeft = 300; 
-                let timerInterval;
-                function updateTimer() {{
-                    const timerDisplay = document.getElementById('timer');
-                    if (timeLeft <= 0) {{
-                        timerDisplay.innerHTML = "<span style='color: red;'>Code expired. Please click resend.</span>";
-                        clearInterval(timerInterval);
-                    }} else {{
-                        let m = Math.floor(timeLeft / 60);
-                        let s = timeLeft % 60;
-                        timerDisplay.innerHTML = "Expires in: <b>" + (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s + "</b>";
-                        timeLeft -= 1;
-                    }}
-                }}
-                async function resendCode() {{
-                    const resendBtn = document.getElementById('resend-btn');
-                    resendBtn.innerText = "Sending fresh code...";
-                    resendBtn.style.pointerEvents = "none";
-                    try {{
-                        let response = await fetch('/admin/api/resend-otp', {{ method: 'POST' }});
-                        if (response.ok) {{
-                            alert('A brand new security code has been dispatched to your WhatsApp account!');
-                            timeLeft = 300;
-                            resendBtn.innerText = "Didn't receive the code? Resend";
-                            resendBtn.style.pointerEvents = "auto";
-                        }} else {{
-                            alert('Server failed to cycle token.');
-                            resendBtn.innerText = "Resend Failed. Retry";
-                            resendBtn.style.pointerEvents = "auto";
-                        }}
-                    }} catch (err) {{
-                        alert('Network down. Try again.');
-                        resendBtn.innerText = "Resend Error. Retry";
-                        resendBtn.style.pointerEvents = "auto";
-                    }}
-                }}
-                window.onload = function() {{
-                    updateTimer();
-                    timerInterval = setInterval(updateTimer, 1000);
-                }};
-            </script>
-        </head>
-        <body style="font-family: Arial; padding: 50px; text-align: center; background-color: #f4f7f6;">
-            <div style="background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 400px; margin: auto;">
-                <h2 style="color: #2E7D32;">Change Password</h2>
-                <p style="font-size: 14px; color: #666;">Enter the 6-digit code sent to your WhatsApp Admin number.</p>
-                <p style="font-size: 12px; color: #999; background: #fff8db; padding: 8px; border-radius: 4px; border-left: 3px solid #ffc107; text-align: left; line-height: 1.4;">
-                    💡 <b>Developer Note:</b> If local network rules restrict WhatsApp delivery to your sandbox profile, input bypass signature <b>"999999"</b> to pass instantly.
-                </p>
-                <p id="timer" style="color: #555; font-size: 14px; margin-top: 20px; margin-bottom: 20px;"></p>
-                <form action="/admin/save-new-password" method="post" style="margin: 0;">
-                    <input type="text" name="otp" placeholder="6-digit Code" required style="padding: 10px; width: 100%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; text-align: center; font-size: 18px; letter-spacing: 3px;">
-                    <input type="password" name="new_password" placeholder="New Password" required style="padding: 10px; width: 100%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px;">
-                    <input type="password" name="confirm_password" placeholder="Confirm New Password" required style="padding: 10px; width: 100%; margin-bottom: 20px; border: 1px solid #ccc; border-radius: 4px;">
-                    <button type="submit" style="background-color: #2E7D32; color: white; border: none; padding: 12px 20px; border-radius: 4px; cursor: pointer; font-weight: bold; width: 100%;">Set Password & Login</button>
-                </form>
-                <hr style="border: 0; border-top: 1px solid #eee; margin: 25px 0;">
-                <a id="resend-btn" href="javascript:void(0);" onclick="resendCode();" style="color: #008CBA; font-size: 14px; text-decoration: underline; font-weight: bold;">Didn't receive the code? Resend</a>
-            </div>
-        </body>
-    </html>
-    """
-
-@app.post("/admin/api/resend-otp")
-async def api_resend_otp():
-    otp = str(random.randint(100000, 999999))
-    expires = datetime.now() + timedelta(minutes=5)
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO admin_auth (phone, otp_code, expires_at) VALUES (%s, %s, %s) ON CONFLICT (phone) DO UPDATE SET otp_code = EXCLUDED.otp_code, expires_at = EXCLUDED.expires_at;", (ADMIN_PHONE, otp, expires))
-        conn.commit()
-        cursor.close()
-        conn.close()
-        send_whatsapp_message(ADMIN_PHONE, f"🔒 *Agro Market Password Reset*\n\nYour NEW security code is: *{otp}*\n\nThis code expires in 5 minutes.")
-        return {"status": "success"}
-    except Exception as e:
-        print(f"API Resend DB Fail: {e}")
-        return Response(status_code=500)
-
-@app.post("/admin/save-new-password")
-async def save_new_password(request: Request):
-    form_data = await request.form()
-    user_otp = form_data.get("otp")
-    new_pwd = form_data.get("new_password")
-    conf_pwd = form_data.get("confirm_password")
-    
-    if new_pwd != conf_pwd:
-        return HTMLResponse("<script>alert('Passwords do not match!'); window.history.back();</script>")
-    
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        
-        # DEVELOPER BYPASS OVERRIDE: This will now completely ignore DB lookup filters 
-        # and create or overwrite the credentials for ADMIN_PHONE instantly!
-        if str(user_otp).strip() == "999999":
-            new_hash = hash_password(new_pwd)
-            session_token = secrets.token_hex(32)
-            
-            cursor.execute("""
-                INSERT INTO admin_auth (phone, password_hash, session_token, otp_code) 
-                VALUES (%s, %s, %s, 'BYPASS') 
-                ON CONFLICT (phone) 
-                DO UPDATE SET password_hash = EXCLUDED.password_hash, session_token = EXCLUDED.session_token;
-            """, (str(ADMIN_PHONE), new_hash, session_token))
-            
-            conn.commit()
-            cursor.close()
-            conn.close()
-            
-            response = RedirectResponse(url="/admin", status_code=302)
-            response.set_cookie(key="secure_admin_session", value=session_token, httponly=True, secure=True, max_age=86400)
-            return response
-
-        # Standard WhatsApp Code Workflow
-        cursor.execute("SELECT otp_code, expires_at FROM admin_auth WHERE phone = %s", (str(ADMIN_PHONE),))
-        result = cursor.fetchone()
-        if result:
-            db_otp, expires_at = result
-            if str(user_otp).strip() == str(db_otp) and datetime.now() < expires_at:
-                new_hash = hash_password(new_pwd)
-                session_token = secrets.token_hex(32)
-                cursor.execute("UPDATE admin_auth SET password_hash = %s, session_token = %s WHERE phone = %s", (new_hash, session_token, str(ADMIN_PHONE)))
-                conn.commit()
-                cursor.close()
-                conn.close()
-                
-                response = RedirectResponse(url="/admin", status_code=302)
-                response.set_cookie(key="secure_admin_session", value=session_token, httponly=True, secure=True, max_age=86400)
-                return response
-                
-        cursor.close()
-        conn.close()
-    except Exception as e:
-        print(f"Save Pwd Backdoor Error: {e}")
-        
-    return HTMLResponse("<script>alert('Invalid or expired verification code. Please check your text fields and try again.'); window.location.href='/admin/login';</script>")
+    return HTMLResponse("<script>alert('Invalid Password.'); window.location.href='/admin/login';</script>")
 
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_dashboard(request: Request):
@@ -710,8 +551,6 @@ async def admin_dashboard(request: Request):
                 th, td {{ padding: 15px; text-align: left; border-bottom: 1px solid #ddd; }}
                 th {{ background-color: #2E7D32; color: white; }}
                 .btn {{ color: white; border: none; padding: 8px 15px; text-align: center; border-radius: 5px; cursor: pointer; font-weight: bold;}}
-                .btn-approve {{ background-color: #4CAF50; }}
-                .btn-approve:hover {{ background-color: #45a049; }}
                 .btn-reject {{ background-color: #f44336; }}
                 .btn-reject:hover {{ background-color: #da190b; }}
                 .btn-add {{ background-color: #008CBA; padding: 10px 20px;}}
@@ -783,20 +622,6 @@ async def logout(request: Request):
     response = RedirectResponse(url="/admin/login")
     response.delete_cookie("secure_admin_session")
     return response
-
-@app.post("/admin/verify/{phone}")
-async def verify_user(phone: str, request: Request):
-    if not is_admin_authorized(request): return HTMLResponse("<script>alert('Unauthorized'); window.location.href='/admin/login';</script>")
-    if approve_user_nin(phone):
-        send_whatsapp_message(phone, "🎉 *Identity Verified!*\n\nYour NIN has been successfully reviewed by our admin team. You are now a trusted and verified member of Agro Market.\n\nType *'menu'* to access your full dashboard.")
-    return HTMLResponse("<script>alert('User Successfully Verified! They have been notified via WhatsApp.'); window.location.href='/admin';</script>")
-
-@app.post("/admin/reject/{phone}")
-async def reject_user(phone: str, request: Request):
-    if not is_admin_authorized(request): return HTMLResponse("<script>alert('Unauthorized'); window.location.href='/admin/login';</script>")
-    if reject_user_nin(phone):
-        send_whatsapp_message(phone, "❌ *Identity Verification Failed*\n\nUnfortunately, we were unable to verify your National Identification Number (NIN). Your registration has been rejected. Please type 'Hi' to register again with a valid NIN.")
-    return HTMLResponse("<script>alert('User Rejected and Deleted.'); window.location.href='/admin';</script>")
 
 @app.post("/admin/price/add")
 async def admin_add_price(request: Request):
@@ -1163,7 +988,7 @@ async def receive_message(request: Request):
                             send_whatsapp_message(sender_phone, "Invalid number. Type 'menu' to exit.")
                             
                     elif step == "awaiting_action":
-                        order_id = session_data.get("target_job")
+                        order_id = session_data.get("target_order")
                         order_details = get_order_by_id(order_id)
                         b_phone = order_details[2] if order_details else ""
                         p_name = order_details[1] if order_details else "item"
@@ -1188,7 +1013,7 @@ async def receive_message(request: Request):
                             order_id = job_map[text]
                             details = get_delivery_details(order_id)
                             if details:
-                                o_id, p_name, f_name, f_loc, f_phone, b_name, b_loc, b_phone = details
+                                o_id, p_name, f_name, f_loc, f_phone, b_name, b_loc, b_phone, *_ = details
                                 msg = f"🚚 *Delivery Job #{o_id}*\n\n📦 Item: {p_name}\n📍 Pickup: {f_name} ({f_loc})\n🎯 Dropoff: {b_name} ({b_loc})\n\n1️⃣ Accept Job ✅\n2️⃣ Cancel ❌\n\n_Reply 1 or 2_"
                                 update_session_data(sender_phone, {"target_job": order_id})
                                 update_session(sender_phone, "driver_flow", "awaiting_confirm_accept")
@@ -1203,7 +1028,7 @@ async def receive_message(request: Request):
                                 send_whatsapp_message(sender_phone, f"✅ You have successfully claimed Delivery Job #{order_id}!\n\nCheck 'My Deliveries' on your dashboard for the exact pickup and dropoff contact links.")
                                 details = get_delivery_details(order_id)
                                 if details:
-                                    _, p_name, _, _, f_phone, _, _, b_phone = details
+                                    _, p_name, _, _, f_phone, _, _, b_phone, *_ = details
                                     driver_link = f"wa.me/{sender_phone}"
                                     send_whatsapp_message(f_phone, f"🚚 *Driver Assigned!* 🚚\n\nA driver is on their way to pick up the *{p_name}* (Order #{order_id}).\n\nDriver Contact: {driver_link}")
                                     send_whatsapp_message(b_phone, f"🚚 *Order Shipped!* 🚚\n\nYour *{p_name}* (Order #{order_id}) has been picked up by a driver and is on its way!\n\nDriver Contact: {driver_link}")
@@ -1218,7 +1043,7 @@ async def receive_message(request: Request):
                             order_id = job_map[text]
                             details = get_delivery_details(order_id)
                             if details:
-                                o_id, p_name, _, _, f_phone, b_name, _, b_phone = details
+                                o_id, p_name, _, _, f_phone, b_name, _, b_phone, *_ = details
                                 msg = f"🚚 *Job #{o_id} In Progress*\n\n📦 Item: {p_name}\n🎯 Dropoff: {b_name}\n📞 Pickup: wa.me/{f_phone}\n📞 Dropoff: wa.me/{b_phone}\n\n1️⃣ Mark Delivered ✅\n2️⃣ Cancel ❌\n\n_Reply 1 or 2_"
                                 update_session_data(sender_phone, {"target_job": order_id})
                                 update_session(sender_phone, "driver_flow", "awaiting_confirm_complete")
@@ -1233,9 +1058,93 @@ async def receive_message(request: Request):
                             send_whatsapp_message(sender_phone, f"✅ Job #{order_id} marked as DELIVERED! Great work.")
                             details = get_delivery_details(order_id)
                             if details:
-                                _, p_name, _, _, f_phone, _, _, b_phone = details
+                                o_id, p_name, f_name, f_loc, f_phone, b_name, b_loc, b_phone, pay_method, p_price, p_qty = details
+                                
+                                # Setup system metadata configuration variables
+                                d_profile = get_user_profile(sender_phone)
+                                d_name = d_profile['name'] if d_profile else "Assigned Rider"
+                                tx_id = f"TXN-{random.randint(10000000, 99999999)}"
+                                time_now = datetime.now().strftime("%I:%M %p")
+                                date_now = datetime.now().strftime("%d %b %Y")
+                                rec_num = f"AGM-{datetime.now().strftime('%Y')}-{str(o_id).zfill(6)}"
+                                
+                                # Process calculated integer string products cleanly
+                                display_qty = p_qty if p_qty else "Quantity Set by Seller"
+                                display_price = p_price if p_price else "Price Set by Seller"
+                                
+                                receipt_msg = f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+         AGRO MARKET 🌱
+   Agricultural Marketplace
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📄 RECEIPT NUMBER:
+{rec_num}
+
+📅 ORDER DATE:
+{date_now}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+👨‍🌾 SELLER DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Seller Name: {f_name}
+Phone Number: +{f_phone.lstrip('+')}
+Location: {f_loc}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🛒 BUYER DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Buyer Name: {b_name}
+Phone Number: +{b_phone.lstrip('+')}
+
+Delivery Address:
+{b_loc}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📦 ORDER DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Product: {p_name}
+Quantity: {display_qty}
+Price: {display_price}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💰 PAYMENT DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Payment Status:
+✅ PAID
+
+Payment Method:
+{pay_method if pay_method else 'Cash Settlement'}
+
+Transaction ID:
+{tx_id}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚚 DELIVERY DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Rider/Driver Name:
+{d_name}
+
+Driver Phone:
++{sender_phone.lstrip('+')}
+
+Delivery Status:
+✅ DELIVERED
+
+Delivery Time:
+{time_now}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⭐ THANK YOU FOR USING
+        AGRO MARKET
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+For support contact:
+📞 +232 XX XXX XXX
+📧 support@agromarket.sl
+🌐 www.agromarket.sl"""
+                                
                                 send_whatsapp_message(f_phone, f"🎉 *Delivery Complete!* 🎉\n\nYour {p_name} (Order #{order_id}) has been successfully delivered to the buyer.")
-                                send_whatsapp_message(b_phone, f"🎉 *Package Arrived!* 🎉\n\nYour {p_name} (Order #{order_id}) has been successfully delivered! Thank you for using Agro Market.")
+                                send_whatsapp_message(b_phone, receipt_msg)
                         update_session(sender_phone, "main_menu", "idle")
                         send_whatsapp_message(sender_phone, "Type 'menu' to return to dashboard.")
     except Exception as e:
