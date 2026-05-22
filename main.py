@@ -485,9 +485,6 @@ def get_dashboard_stats():
 # SECURE ADMIN WEB DASHBOARD ROUTES
 # ========================================================
 
-def hash_password(password: str):
-    return hashlib.sha256(password.encode('utf-8')).hexdigest()
-
 def is_admin_authorized(request: Request):
     session_cookie = request.cookies.get("secure_admin_session")
     if not session_cookie: return False
@@ -523,28 +520,10 @@ async def process_login(request: Request):
     form_data = await request.form()
     password = form_data.get("password")
     try:
-        # FIXED SECURITY LOOP: Changed cookie structure settings to support seamless reverse proxy tracking across cloud networks
-        if str(password).strip() == "AgroAdmin2026!":
-            session_token = secrets.token_hex(32)
-            conn = psycopg2.connect(DATABASE_URL)
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO admin_auth (phone, password_hash, session_token) 
-                VALUES (%s, %s, %s) 
-                ON CONFLICT (phone) 
-                DO UPDATE SET session_token = EXCLUDED.session_token, password_hash = EXCLUDED.password_hash;
-            """, (str(ADMIN_PHONE), hash_password("AgroAdmin2026!"), session_token))
-            conn.commit()
-            cursor.close()
-            conn.close()
-
-            response = RedirectResponse(url="/admin", status_code=302)
-            # FIXED: Removed strict secure=True and added samesite mapping so cookies save instantly across standard proxy routes
-            response.set_cookie(key="secure_admin_session", value=session_token, httponly=True, samesite="lax", max_age=86400)
-            return response
-            
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
+        
+        # CLEAN PRODUCTION SEARCH: Look up the typed password strictly against the Supabase hashed values columns 
         cursor.execute("""
             SELECT password_hash FROM admin_auth 
             WHERE phone = %s 
@@ -567,12 +546,13 @@ async def process_login(request: Request):
                 conn.close()
                 
                 response = RedirectResponse(url="/admin", status_code=302)
+                # CLEAN ROUTING COOKIE: Kept lax cross-origin cookie mapping securely
                 response.set_cookie(key="secure_admin_session", value=session_token, httponly=True, samesite="lax", max_age=86400)
                 return response
         cursor.close()
         conn.close()
     except Exception as e:
-        print(f"Login Type Processing Error: {e}")
+        print(f"Login Verification Error: {e}")
         
     return HTMLResponse("<script>alert('Invalid Password.'); window.location.href='/admin/login';</script>")
 
@@ -867,7 +847,7 @@ async def receive_message(request: Request):
                         update_user_name_and_step(sender_phone, text)
                         fresh_prof = get_user_profile(sender_phone)
                         if fresh_prof and fresh_prof.get("step") == "awaiting_vehicle":
-                            send_whatsapp_message(sender_phone, "Responded! 🚛 Logistics Profile Detected!\n\nPlease type your **Vehicle License Plate Number** (e.g., AEK-458).")
+                            send_whatsapp_message(sender_phone, "Responded! 1️⃣ Logistics Profile Detected!\n\nPlease type your **Vehicle License Plate Number** (e.g., AEK-458).")
                         else:
                             send_whatsapp_message(sender_phone, "Thanks! Now please enter your *NIN (National ID Number)*.")
                     
