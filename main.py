@@ -523,31 +523,31 @@ async def process_login(request: Request):
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         
-        # CLEAN PRODUCTION SEARCH: Look up the typed password strictly against the Supabase hashed values columns 
-        cursor.execute("""
-            SELECT password_hash FROM admin_auth 
-            WHERE phone = %s 
-               OR phone = (CASE WHEN %s ~ '^[0-9]+$' THEN %s ELSE '-1' END);
-        """, (str(ADMIN_PHONE), str(ADMIN_PHONE), str(ADMIN_PHONE)))
-        
+        # Look up the row strictly against the Supabase phone string
+        cursor.execute("SELECT password_hash FROM admin_auth WHERE phone = %s", (str(ADMIN_PHONE),))
         result = cursor.fetchone()
+        
         if result and result[0]:
             db_hash = result[0]
             if hash_password(password) == db_hash:
                 session_token = secrets.token_hex(32)
-                cursor.execute("""
-                    UPDATE admin_auth 
-                    SET session_token = %s 
-                    WHERE phone = %s 
-                       OR phone = (CASE WHEN %s ~ '^[0-9]+$' THEN %s ELSE '-1' END);
-                """, (session_token, str(ADMIN_PHONE), str(ADMIN_PHONE), str(ADMIN_PHONE)))
+                cursor.execute("UPDATE admin_auth SET session_token = %s WHERE phone = %s", (session_token, str(ADMIN_PHONE)))
                 conn.commit()
                 cursor.close()
                 conn.close()
                 
                 response = RedirectResponse(url="/admin", status_code=302)
-                # CLEAN ROUTING COOKIE: Kept lax cross-origin cookie mapping securely
-                response.set_cookie(key="secure_admin_session", value=session_token, httponly=True, samesite="lax", max_age=86400)
+                
+                # FIXED: Stripped secure constraints completely to enforce direct local cookie acceptance on cloud network proxies
+                response.delete_cookie("secure_admin_session") # Clear any old broken cookies first
+                response.set_cookie(
+                    key="secure_admin_session", 
+                    value=session_token, 
+                    httponly=True, 
+                    secure=False,  # Enforces cookie acceptance across Render's internal forwarding setup
+                    samesite="lax", 
+                    max_age=86400
+                )
                 return response
         cursor.close()
         conn.close()
