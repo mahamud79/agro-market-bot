@@ -791,21 +791,14 @@ async def receive_message(request: Request):
                 text = message_data["text"]["body"].strip().lower()
                 
                 if text in ["hi", "hello", "menu"]:
-                    if not profile:
-                        create_user_with_language(sender_phone, "english")
-                    update_session(sender_phone, "onboarding", "awaiting_role")
-                    send_role_menu(sender_phone, profile.get("language", "english") if profile else "english")
-                    return {"status": "ok"}
-
-                if not profile: 
-                    if text == "1":
-                        create_user_with_language(sender_phone, "english")
+                    if profile and profile.get("role"):
+                        update_session(sender_phone, "main_menu", "idle")
+                        send_main_menu(sender_phone, profile["role"], profile.get("language", "english"))
+                    else:
+                        if not profile:
+                            create_user_with_language(sender_phone, "english")
                         update_session(sender_phone, "onboarding", "awaiting_role")
                         send_role_menu(sender_phone, "english")
-                    elif text == "2":
-                        create_user_with_language(sender_phone, "krio")
-                        update_session(sender_phone, "onboarding", "awaiting_role")
-                        send_role_menu(sender_phone, "krio")
                     return {"status": "ok"}
 
                 flow = profile.get("flow")
