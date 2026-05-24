@@ -774,7 +774,7 @@ async def admin_delete_price(price_id: int, request: Request):
     delete_market_price(price_id)
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
-# --- STANDALONE FIXED CONFIRM DELIVERY FUNCTION ---
+# --- STANDALONE RELATIONAL CONFIRM DELIVERY FUNCTION ---
 def process_confirm_delivery(sender_phone):
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -782,9 +782,9 @@ def process_confirm_delivery(sender_phone):
         
         target_buyer = str(sender_phone).strip()
         
-        # 1. Fetch active order matching delivered tracking constraints safely
+        # 1. Fetch active order matching delivered tracking constraints cleanly
         cursor.execute("""
-            SELECT id, product_name, farmer_phone, total_amount, subtotal, delivery_fee, delivery_option
+            SELECT id, product_name, farmer_phone, total_amount, subtotal, delivery_fee, delivery_option, driver_phone
             FROM orders 
             WHERE buyer_phone = %s AND status = 'DELIVERED' AND wallet_status = 'held' 
             LIMIT 1
@@ -792,9 +792,9 @@ def process_confirm_delivery(sender_phone):
         escrow_match = cursor.fetchone()
         
         if escrow_match:
-            o_id, p_name, target_farmer_phone, total_amt, s_total, d_fee, d_opt = escrow_match
+            o_id, p_name, target_farmer_phone, total_amt, s_total, d_fee, d_opt, target_driver_phone = escrow_match
             
-            # Fire simulated payout transfer to the merchant destination ledger
+            # Fire simulated payout transfer to Monime destination wallet containers
             monime_api_endpoint = "https://api.monime.io/v1/financial-account/transfers"
             monime_headers = {"Authorization": f"Bearer {MONIME_SECRET_KEY}", "Content-Type": "application/json"}
             monime_payload = {
@@ -804,10 +804,8 @@ def process_confirm_delivery(sender_phone):
                 "currency": "SLE",
                 "metadata": {"order_id": o_id, "tracking_type": "escrow_payout"}
             }
-            try: 
-                requests.post(monime_api_endpoint, headers=monime_headers, json=monime_payload, timeout=5)
-            except Exception as api_err: 
-                print(f"Monime Transfer API warning: {api_err}")
+            try: requests.post(monime_api_endpoint, headers=monime_headers, json=monime_payload, timeout=5)
+            except Exception as api_err: print(f"Monime Transfer API warning: {api_err}")
             
             tx_id = f"OM-{random.randint(10000000, 99999999)}"
             rec_num = f"AGM-{datetime.now().strftime('%Y')}-{str(o_id).zfill(6)}"
@@ -816,7 +814,26 @@ def process_confirm_delivery(sender_phone):
             cursor.execute("UPDATE orders SET wallet_status = 'released', transaction_id = %s, receipt_number = %s WHERE id = %s", (tx_id, rec_num, o_id))
             conn.commit()
             
-            # 2. INDEPENDENT PARAMETER ASSIGNMENT: Pull strings explicitly to bypass relational mapping lockouts
+            # 2. DYNAMIC DRIVER LOOKUP: Fetches the actual profile details matching the driver_phone column!
+            driver_name = "Platform Fleet Courier"
+            vehicle_number = "AEK-458"
+            
+            if target_driver_phone:
+                cursor.execute("SELECT name, vehicle_number FROM users WHERE phone = %s LIMIT 1", (str(target_driver_phone).strip(),))
+                driver_profile = cursor.fetchone()
+                if driver_profile:
+                    driver_name = driver_profile[0] if driver_profile[0] else driver_name
+                    vehicle_number = driver_profile[1] if driver_profile[1] else vehicle_number
+            
+            # Fetch real buyer and seller name values for the receipt printout
+            cursor.execute("SELECT name FROM users WHERE phone = %s LIMIT 1", (str(target_farmer_phone).strip(),))
+            farmer_match = cursor.fetchone()
+            farmer_name = farmer_match[0] if farmer_match else "Agro Marketplace Vendor"
+            
+            cursor.execute("SELECT name FROM users WHERE phone = %s LIMIT 1", (str(target_buyer).strip(),))
+            buyer_match = cursor.fetchone()
+            buyer_name = buyer_match[0] if buyer_match else "Agro Registered Buyer"
+
             date_now = datetime.now().strftime("%d %b %Y")
             time_now = datetime.now().strftime("%I:%M %p")
             
@@ -834,13 +851,13 @@ def process_confirm_delivery(sender_phone):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 👨‍🌾 SELLER DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Seller Name: Agro Marketplace Vendor
+Seller Name: {str(farmer_name)}
 Phone Number: +{str(target_farmer_phone).lstrip('+')}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🛒 BUYER DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Buyer Name: Agro Registered Buyer
+Buyer Name: {str(buyer_name)}
 Phone Number: +{str(target_buyer).lstrip('+')}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -867,16 +884,18 @@ Transaction ID:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🚚 DELIVERY DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Rider/Driver Name: Platform Courier Rider
+Rider/Driver Name: {str(driver_name)}
 Vehicle Type: {str(d_opt)}
-Delivery Status: ✅ DELIVERED & APPROVED
+Vehicle Number: {str(vehicle_number)}
+
+Delivery Status:
+✅ DELIVERED & APPROVED BY BUYER
 
 Delivery Time:
 {str(time_now)}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
             
             send_whatsapp_message(target_buyer, receipt_msg)
-            # Send mirror log if using a separate number sequence
             if str(target_buyer) != str(target_farmer_phone):
                 send_whatsapp_message(str(target_farmer_phone), f"💸 *Escrow Balance Released!* Order #{o_id} complete.\n\n" + receipt_msg)
         else:
