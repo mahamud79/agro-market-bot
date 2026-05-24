@@ -915,6 +915,11 @@ async def receive_message(request: Request):
                         send_role_menu(sender_phone, "english")
                     return {"status": "ok"}
 
+                # CRITICAL SYSTEM OPERATION: Check for delivery confirmations up front, bypassing active state flows!
+                if "confirm" in text or text == "confirm delivery":
+                    process_confirm_delivery(sender_phone)
+                    return {"status": "ok"}
+
                 flow = profile.get("flow")
                 step = profile.get("step")
 
@@ -1300,11 +1305,6 @@ async def receive_message(request: Request):
                                 send_whatsapp_message(f_phone, f"🚚 Delivery complete for Job #{order_id}. Awaiting buyer validation parameter to release cash holdings.")
                                 send_whatsapp_message(b_phone, f"🔔 *Delivery Arrival Notification!* Your order of *{p_name}* has been dropped off. Please check the package and reply with **'confirm delivery'** to release wallet authorization balances.")
                         update_session(sender_phone, "main_menu", "idle")
-
-                # --- DETECT ESCROW COMPLETION MESSAGES FROM BUYERS ---
-                elif "confirm" in text or text == "confirm delivery":
-                    process_confirm_delivery(sender_phone)
-                    return {"status": "ok"}
 
         return {"status": "ok"}
     except Exception as e:
