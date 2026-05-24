@@ -1192,7 +1192,7 @@ async def receive_message(request: Request):
                         conn = psycopg2.connect(DATABASE_URL)
                         cursor = conn.cursor()
                         
-                        # 1. Fetch the active order holding funds in escrow safely
+                        # 1. Query the first active delivered order matching escrow hold requirements
                         cursor.execute("""
                             SELECT id, product_name, farmer_phone, total_amount 
                             FROM orders 
@@ -1204,7 +1204,6 @@ async def receive_message(request: Request):
                         if escrow_match:
                             o_id, p_name, target_farmer_phone, total_amt = escrow_match
                             
-                            # 2. Fire simulated escrow payout transfer directly to Monime API
                             monime_api_endpoint = "https://api.monime.io/v1/financial-account/transfers"
                             monime_headers = {"Authorization": f"Bearer {MONIME_SECRET_KEY}", "Content-Type": "application/json"}
                             monime_payload = {
@@ -1214,19 +1213,14 @@ async def receive_message(request: Request):
                                 "currency": "SLE",
                                 "metadata": {"order_id": o_id, "tracking_type": "escrow_payout"}
                             }
-                            try: 
-                                requests.post(monime_api_endpoint, headers=monime_headers, json=monime_payload, timeout=5)
-                            except Exception as api_err:
-                                print(f"Monime Transfer API warning: {api_err}")
+                            try: requests.post(monime_api_endpoint, headers=monime_headers, json=monime_payload, timeout=5)
+                            except Exception as api_err: print(f"Monime Transfer API warning: {api_err}")
                             
                             tx_id = f"OM-{random.randint(10000000, 99999999)}"
                             rec_num = f"AGM-{datetime.now().strftime('%Y')}-{str(o_id).zfill(6)}"
-                            
-                            # 3. Finalize statuses inside the database
                             cursor.execute("UPDATE orders SET wallet_status = 'released', transaction_id = %s, receipt_number = %s WHERE id = %s", (tx_id, rec_num, o_id))
                             conn.commit()
                             
-                            # 4. Pull out all formatting fields using independent variable assignments
                             cursor.execute("""
                                 SELECT 
                                     COALESCE(f.name, 'Agro Vendor') AS farmer_name, 
@@ -1247,10 +1241,10 @@ async def receive_message(request: Request):
                                 LEFT JOIN users u_d ON o.driver_phone = u_d.phone
                                 WHERE o.id = %s;
                             """, (o_id,))
-                            
                             rcpt_data = cursor.fetchone()
+                            
                             if rcpt_data:
-                                f_name, b_name, b_loc, f_phone_extracted, p_price, p_qty, d_fee, s_total, d_opt, d_name, d_veh = rcpt_data
+                                f_name, b_name, b_loc, f_phone, p_price, p_qty, d_fee, s_total, d_opt, d_name, d_veh = rcpt_data
                                 date_now = datetime.now().strftime("%d %b %Y")
                                 time_now = datetime.now().strftime("%I:%M %p")
                                 
@@ -1269,7 +1263,7 @@ async def receive_message(request: Request):
 👨‍🌾 SELLER DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Seller Name: {f_name}
-Phone Number: +{str(f_phone_extracted).lstrip('+')}
+Phone Number: +{str(f_phone).lstrip('+')}
 Location: Marketplace Seller
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1327,16 +1321,18 @@ Delivery Time:
 ⭐ THANK YOU FOR USING
         AGRO MARKET
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
-                                # Send messages out safely
                                 send_whatsapp_message(sender_phone, receipt_msg)
-                                send_whatsapp_message(str(f_phone_extracted), f"💸 *Escrow Balance Released!* Buyer confirmed delivery tracking items for Order #{o_id}.\n\n" + receipt_msg)
+                                send_whatsapp_message(str(f_phone), f"💸 *Escrow Balance Released!* Buyer confirmed delivery tracking items for Order #{o_id}.\n\n" + receipt_msg)
                             else:
-                                send_whatsapp_message(sender_phone, "❌ Error constructing receipt template data.")
+                                send_whatsapp_message(sender_phone, "❌ Error loading delivery row arrays.")
                         else:
                             send_whatsapp_message(sender_phone, "❌ No pending order matching delivery approval requirements was logged for your device.")
                         
                         cursor.close()
                         conn.close()
                     except Exception as e:
-                        print(f"Escrow runtime execution exception: {e}")
-                        send_whatsapp_message(sender_phone, "System tracking error compiling receipt arrays.")
+                        print(f"Escrow error validation tracker maps: {e}")
+                        send_whatsapp_message(sender_phone, "Database timeout compiling receipt values.")
+    except Exception as e:
+        print(f"Error logic layer main arrays: {e}")
+    return {"status": "ok"}
