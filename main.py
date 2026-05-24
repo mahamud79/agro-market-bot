@@ -778,31 +778,32 @@ def process_confirm_delivery(sender_phone):
             conn.commit()
             
             # 2. SEAMLESS DECOUPLED MATRIX LOOKUP: Pull fields safely without relational row locks
-            cursor.execute("""
-                SELECT 
-                    COALESCE(f.name, 'Agro Vendor') AS farmer_name, 
-                    COALESCE(b.name, 'Agro Buyer') AS buyer_name, 
-                    COALESCE(b.location, 'Market Address Logged') AS buyer_loc, 
-                    o.farmer_phone AS farmer_phone_raw,
-                    COALESCE(o.delivery_fee, 0) AS delivery_fee, 
-                    COALESCE(o.subtotal, 0) AS subtotal, 
-                    COALESCE(o.delivery_option, 'Platform Courier') AS delivery_option, 
-                    COALESCE(u_d.name, 'Courier Fleet') AS driver_name, 
-                    COALESCE(u_d.vehicle_number, 'AEK-458') AS vehicle_number
-                FROM orders o 
-                LEFT JOIN users f ON o.farmer_phone = f.phone 
-                LEFT JOIN users b ON o.buyer_phone = b.phone 
-                LEFT JOIN users u_d ON o.driver_phone = u_d.phone
-                WHERE o.id = %s;
-            """, (o_id,))
+            # 4. Fetch full itemized receipt records safely using LEFT JOIN properties
+        cursor.execute("""
+            SELECT 
+                COALESCE(f.name, 'Agro Vendor') AS farmer_name, 
+                COALESCE(b.name, 'Agro Buyer') AS buyer_name, 
+                COALESCE(b.location, 'Market Address Logged') AS buyer_loc, 
+                o.farmer_phone AS farmer_phone_raw,
+                COALESCE(o.subtotal, 0) AS subtotal,
+                COALESCE(o.delivery_fee, 0) AS delivery_fee,
+                COALESCE(o.delivery_option, 'Platform Fleet') AS delivery_option,
+                COALESCE(u_d.name, 'Courier Fleet') AS driver_name,
+                COALESCE(u_d.vehicle_number, 'AEK-458') AS vehicle_number
+            FROM orders o 
+            LEFT JOIN users f ON o.farmer_phone = f.phone 
+            LEFT JOIN users b ON o.buyer_phone = b.phone 
+            LEFT JOIN users u_d ON o.driver_phone = u_d.phone
+            WHERE o.id = %s;
+        """, (o_id,))
+        rcpt = cursor.fetchone()
+        
+        if rcpt:
+            f_name, b_name, b_loc, f_phone, s_total, d_fee, d_opt, d_name, d_veh = rcpt
+            date_now = datetime.now().strftime("%d %b %Y")
+            time_now = datetime.now().strftime("%I:%M %p")
             
-            rcpt_data = cursor.fetchone()
-            if rcpt_data:
-                f_name, b_name, b_loc, extracted_farmer_phone, d_fee, s_total, d_opt, d_name, d_veh = rcpt_data
-                date_now = datetime.now().strftime("%d %b %Y")
-                time_now = datetime.now().strftime("%I:%M %p")
-                
-                receipt_msg = f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            receipt_msg = f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━
          AGRO MARKET 🌱
    Agricultural Marketplace
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -817,14 +818,13 @@ def process_confirm_delivery(sender_phone):
 👨‍🌾 SELLER DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Seller Name: {f_name}
-Phone Number: +{str(extracted_farmer_phone).lstrip('+')}
-Location: Marketplace Seller
+Phone Number: +{str(f_phone).lstrip('+')}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🛒 BUYER DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Buyer Name: {b_name}
-Phone Number: +{str(target_buyer).lstrip('+')}
+Phone Number: +{str(sender_phone).lstrip('+')}
 
 Delivery Address:
 {b_loc}
@@ -867,25 +867,9 @@ Delivery Status:
 
 Delivery Time:
 {time_now}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⭐ THANK YOU FOR USING
-        AGRO MARKET
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
-                
-                send_whatsapp_message(target_buyer, receipt_msg)
-                send_whatsapp_message(str(extracted_farmer_phone), f"💸 *Escrow Balance Released!* Buyer confirmed delivery tracking items for Order #{o_id}.\n\n" + receipt_msg)
-            else:
-                send_whatsapp_message(target_buyer, "❌ Active order matched, but receipt data generation sub-query failed.")
-        else:
-            # ACTIVE FEEDBACK FALLBACK: Tells you if the database parameters don't match!
-            send_whatsapp_message(target_buyer, f"🔍 Looking for active order... No record found matching: Buyer={target_buyer}, Status=DELIVERED, Wallet=held.")
-        
-        cursor.close()
-        conn.close()
-    except Exception as e:
-        print(f"Escrow runtime execution exception: {e}")
-        send_whatsapp_message(sender_phone, f"⚠️ Server Exception caught during invoice generation step: {str(e)}")
+            send_whatsapp_message(sender_phone, receipt_msg)
+            send_whatsapp_message(str(f_phone), f"💸 *Escrow Balance Released!* Buyer confirmed delivery tracking items for Order #{o_id}.\n\n" + receipt_msg)
 
 
 # ========================================================
