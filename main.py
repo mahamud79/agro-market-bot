@@ -740,7 +740,6 @@ def process_confirm_delivery(sender_phone):
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         
-        # Decouple the phone variable representation cleanly
         target_buyer = str(sender_phone).strip()
         
         # 1. Fetch active order matching delivered tracking constraints
@@ -761,7 +760,7 @@ def process_confirm_delivery(sender_phone):
             monime_payload = {
                 "source_account": "agro_market_escrow_holding",
                 "destination_wallet": f"wallet_{target_farmer_phone}",
-                "amount": total_amt,
+                "amount": int(total_amt if total_amt else 0),
                 "currency": "SLE",
                 "metadata": {"order_id": o_id, "tracking_type": "escrow_payout"}
             }
@@ -777,8 +776,7 @@ def process_confirm_delivery(sender_phone):
             cursor.execute("UPDATE orders SET wallet_status = 'released', transaction_id = %s, receipt_number = %s WHERE id = %s", (tx_id, rec_num, o_id))
             conn.commit()
             
-            # 2. SEAMLESS DECOUPLED MATRIX LOOKUP: Pull fields safely without relational row locks
-            # 4. Fetch full itemized receipt records safely using LEFT JOIN properties
+            # 2. Fetch full itemized receipt records safely using LEFT JOIN properties
             cursor.execute("""
                 SELECT 
                     COALESCE(f.name, 'Agro Vendor') AS farmer_name, 
@@ -809,37 +807,37 @@ def process_confirm_delivery(sender_phone):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 📄 RECEIPT NUMBER:
-{rec_num}
+{str(rec_num)}
 
 📅 ORDER DATE:
-{date_now}
+{str(date_now)}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 👨‍🌾 SELLER DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Seller Name: {f_name}
+Seller Name: {str(f_name)}
 Phone Number: +{str(f_phone).lstrip('+')}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🛒 BUYER DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Buyer Name: {b_name}
+Buyer Name: {str(b_name)}
 Phone Number: +{str(sender_phone).lstrip('+')}
 
 Delivery Address:
-{b_loc}
+{str(b_loc)}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📦 ORDER DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Product: {p_name}
-Subtotal: Le {s_total}
-Delivery Fee: Le {d_fee}
+Product: {str(p_name)}
+Subtotal: Le {str(s_total)}
+Delivery Fee: Le {str(d_fee)}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 💰 PAYMENT DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Total Amount Paid: Le {total_amt}
+Total Amount Paid: Le {str(total_amt)}
 
 Payment Status:
 ✅ PAID (RELEASED FROM ESCROW)
@@ -848,30 +846,33 @@ Payment Method:
 Orange Money / Monime Escrow
 
 Transaction ID:
-{tx_id}
+{str(tx_id)}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🚚 DELIVERY DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Rider/Driver Name:
-{d_name}
+{str(d_name)}
 
 Vehicle Type:
-{d_opt}
+{str(d_opt)}
 
 Vehicle Number:
-{d_veh}
+{str(d_veh)}
 
 Delivery Status:
 ✅ DELIVERED & APPROVED BY BUYER
 
 Delivery Time:
-{time_now}
+{str(time_now)}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
-                send_whatsapp_message(sender_phone, receipt_msg)
+                send_whatsapp_message(target_buyer, receipt_msg)
                 send_whatsapp_message(str(f_phone), f"💸 *Escrow Balance Released!* Buyer confirmed delivery tracking items for Order #{o_id}.\n\n" + receipt_msg)
+            else:
+                send_whatsapp_message(target_buyer, "❌ Active order matched, but receipt data generation sub-query failed.")
         else:
-            send_whatsapp_message(sender_phone, f"🔍 Looking for active order... No record found matching: Buyer={target_buyer}, Status=DELIVERED, Wallet=held.")
+            # INTERACTIVE LOGGER FALLBACK: Instantly texts you what it found instead of staying silent!
+            send_whatsapp_message(target_buyer, f"🔍 Query Lookup Empty:\nNo record matched constraints:\nBuyer: {target_buyer}\nStatus: DELIVERED\nWallet status: held")
         
         cursor.close()
         conn.close()
