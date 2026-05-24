@@ -1190,6 +1190,8 @@ async def receive_message(request: Request):
                     try:
                         conn = psycopg2.connect(DATABASE_URL)
                         cursor = conn.cursor()
+                        
+                        # Fetch the active order
                         cursor.execute("""
                             SELECT id, product_name, farmer_phone, total_amount 
                             FROM orders 
@@ -1200,54 +1202,45 @@ async def receive_message(request: Request):
                         
                         if escrow_match:
                             o_id, p_name, target_farmer_phone, total_amt = escrow_match
-                            # ... (rest of logic here) ...
+                            
+                            # Fire simulated payout
+                            try:
+                                requests.post("https://api.monime.io/v1/financial-account/transfers", 
+                                              headers={"Authorization": f"Bearer {MONIME_SECRET_KEY}", "Content-Type": "application/json"}, 
+                                              json={"source_account": "agro_market_escrow_holding", "destination_wallet": f"wallet_{target_farmer_phone}", "amount": total_amt, "currency": "SLE", "metadata": {"order_id": o_id}}, 
+                                              timeout=5)
+                            except Exception as api_err:
+                                print(f"API Warning: {api_err}")
+
                             tx_id = f"OM-{random.randint(10000000, 99999999)}"
                             rec_num = f"AGM-{datetime.now().strftime('%Y')}-{str(o_id).zfill(6)}"
                             cursor.execute("UPDATE orders SET wallet_status = 'released', transaction_id = %s, receipt_number = %s WHERE id = %s", (tx_id, rec_num, o_id))
                             conn.commit()
                             
+                            # Build Receipt
                             cursor.execute("""
-                                SELECT 
-                                    COALESCE(f.name, 'Agro Vendor') AS farmer_name, 
-                                    COALESCE(b.name, 'Agro Buyer') AS buyer_name, 
-                                    COALESCE(b.location, 'Market Address Logged') AS buyer_loc, 
-                                    o.farmer_phone AS farmer_phone_raw,
-                                    COALESCE(p.price, o.subtotal::varchar) AS price, 
-                                    COALESCE(p.quantity, '1 Unit') AS quantity, 
-                                    COALESCE(o.delivery_fee, 0) AS delivery_fee, 
-                                    COALESCE(o.subtotal, 0) AS subtotal, 
-                                    COALESCE(o.delivery_option, 'Platform Courier') AS delivery_option, 
-                                    COALESCE(u_d.name, 'Courier Fleet') AS driver_name, 
-                                    COALESCE(u_d.vehicle_number, 'AEK-458') AS vehicle_number
+                                SELECT f.name, b.name, b.location, o.farmer_phone, o.subtotal, o.delivery_fee, o.delivery_option, u_d.name, u_d.vehicle_number
                                 FROM orders o 
                                 LEFT JOIN users f ON o.farmer_phone = f.phone 
                                 LEFT JOIN users b ON o.buyer_phone = b.phone 
-                                LEFT JOIN products p ON o.product_id = p.id
                                 LEFT JOIN users u_d ON o.driver_phone = u_d.phone
                                 WHERE o.id = %s;
                             """, (o_id,))
-                            
                             rcpt_data = cursor.fetchone()
+                            
                             if rcpt_data:
-                                f_name, b_name, b_loc, f_phone_extracted, p_price, p_qty, d_fee, s_total, d_opt, d_name, d_veh = rcpt_data
-                                date_now = datetime.now().strftime("%d %b %Y")
-                                time_now = datetime.now().strftime("%I:%M %p")
-                                
-                                receipt_msg = f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n         AGRO MARKET 🌱\n   Agricultural Marketplace\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n📄 RECEIPT NUMBER:\n{rec_num}\n\n📅 ORDER DATE:\n{date_now}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n👨‍🌾 SELLER DETAILS\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nSeller Name: {f_name}\nPhone Number: +{str(f_phone_extracted).lstrip('+')}\nLocation: Marketplace Seller\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🛒 BUYER DETAILS\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nBuyer Name: {b_name}\nPhone Number: +{str(sender_phone).lstrip('+')}\n\nDelivery Address:\n{b_loc}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📦 ORDER DETAILS\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nProduct: {p_name}\nQuantity: {p_qty}\nPrice Per Unit: {p_price}\nSubtotal: Le {s_total}\n\nDelivery Fee: Le {d_fee}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n💰 PAYMENT DETAILS\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nTotal Amount Paid: Le {total_amt}\n\nPayment Status:\n✅ PAID (RELEASED FROM ESCROW)\n\nPayment Method:\nOrange Money / Monime Escrow\n\nTransaction ID:\n{tx_id}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🚚 DELIVERY DETAILS\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nRider/Driver Name:\n{d_name}\n\nVehicle Type:\n{d_opt}\n\nVehicle Number:\n{d_veh}\n\nDelivery Status:\n✅ DELIVERED & APPROVED BY BUYER\n\nDelivery Time:\n{time_now}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n⭐ THANK YOU FOR USING\n        AGRO MARKET\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
-                                send_whatsapp_message(sender_phone, receipt_msg)
-                                send_whatsapp_message(str(f_phone_extracted), f"💸 *Escrow Balance Released!* Buyer confirmed delivery tracking items for Order #{o_id}.\n\n" + receipt_msg)
+                                f_name, b_name, b_loc, f_phone, s_total, d_fee, d_opt, d_name, d_veh = rcpt_data
+                                msg = f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n         AGRO MARKET 🌱\n\n📄 RECEIPT: {rec_num}\n\n👨‍🌾 SELLER: {f_name}\n🛒 BUYER: {b_name}\n📦 ITEM: {p_name}\n💰 PAID: Le {total_amt}\n🚚 RIDER: {d_name}\n\n✅ DELIVERED & APPROVED\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                                send_whatsapp_message(sender_phone, msg)
+                                send_whatsapp_message(str(f_phone), f"💸 Escrow Released for #{o_id}.\n\n" + msg)
                             else:
-                                send_whatsapp_message(sender_phone, "❌ Error loading receipt data.")
+                                send_whatsapp_message(sender_phone, "❌ Order processed, but receipt data generation failed.")
                         else:
-                            send_whatsapp_message(sender_phone, "❌ No pending order found.")
+                            send_whatsapp_message(sender_phone, "❌ No pending order matching 'DELIVERED' & 'held' found.")
                         
                         cursor.close()
                         conn.close()
                     except Exception as e:
-                        print(f"Error: {e}")
-                        
-            # Finally, outside all ifs
-            return {"status": "ok"}
-    except Exception as e:
-        print(f"Error logic layer main arrays: {e}")
-    return {"status": "ok"}
+                        print(f"ERROR: {e}")
+                        send_whatsapp_message(sender_phone, f"⚠️ Error: {str(e)}")
+                    return {"status": "ok"}
