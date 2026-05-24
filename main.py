@@ -502,6 +502,81 @@ def is_admin_authorized(request: Request):
         return True
     except: return False
 
+
+@app.get("/checkout/pay/{order_id}", response_class=HTMLResponse)
+async def checkout_payment_page(order_id: int):
+    # Fetch core total configurations to display on screen
+    order_data = get_order_by_id(order_id)
+    if not order_data:
+        return "<h3>❌ Order registry entry not found inside current data records.</h3>"
+    
+    p_name = order_data[1]
+    total_amt = order_data[10]
+    
+    html_layout = f"""
+    <html>
+        <head>
+            <title>Monime Escrow Checkout</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                body {{ font-family: 'Segoe UI', Arial, sans-serif; background-color: #f4f7f6; padding: 20px; text-align: center; }}
+                .pay-card {{ background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); max-width: 400px; margin: 40px auto; border-top: 6px solid #2E7D32; }}
+                h2 {{ color: #2E7D32; margin-bottom: 5px; }}
+                .price-tag {{ font-size: 32px; font-weight: bold; color: #333; margin: 20px 0; }}
+                .btn-submit {{ background-color: #2E7D32; color: white; border: none; padding: 14px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; width: 100%; font-size: 16px; transition: 0.2s; }}
+                .btn-submit:hover {{ background-color: #1b5e20; }}
+                .details {{ text-align: left; background: #f9f9f9; padding: 15px; border-radius: 6px; margin-bottom: 20px; font-size: 14px; color: #555; }}
+            </style>
+        </head>
+        <body>
+            <div class="pay-card">
+                <h2>Monime Escrow 💳</h2>
+                <p style="color:#777; margin-top:0;">Secure Agricultural Settlement</p>
+                <div class="details">
+                    <b>📦 Item:</b> {p_name}<br>
+                    <b>🔢 Order Reference:</b> #{order_id}<br>
+                    <b>🛡️ Escrow Protection:</b> Active
+                </div>
+                <div class="price-tag">Le {total_amt}</div>
+                <form action="/admin/api/simulate-webhook-trigger/{order_id}" method="post">
+                    <button type="submit" class="btn-submit">🚀 Authorize Escrow Deposit</button>
+                </form>
+            </div>
+        </body>
+    </html>
+    """
+    return html_layout
+
+@app.post("/admin/api/simulate-webhook-trigger/{order_id}")
+async def simulate_webhook_trigger(order_id: int):
+    # This automatically calls your internal processing state machine to complete the transaction setup!
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        tx_id = f"OM-{random.randint(10000000, 99999999)}"
+        rec_num = f"AGM-{datetime.now().strftime('%Y')}-{str(order_id).zfill(6)}"
+        
+        cursor.execute("""
+            UPDATE orders 
+            SET status = 'paid', transaction_id = %s, receipt_number = %s, wallet_status = 'held' 
+            WHERE id = %s RETURNING buyer_phone, farmer_phone, product_name, total_amount
+        """, (tx_id, rec_num, order_id))
+        res = cursor.fetchone()
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        if res:
+            b_phone, f_phone, p_name, total_amt = res
+            success_msg = f"💳 *Payment Escrow Confirmed!* Le {total_amt} for your order of *{p_name}* has been successfully secured. Funds are locked safely until delivery verification."
+            send_whatsapp_message(b_phone, success_msg)
+            send_whatsapp_message(f_phone, f"💰 *Payment Received in Escrow!* The buyer has funded Order #{order_id} ({p_name}). Please process shipping configurations immediately.")
+            
+        return HTMLResponse("<script>alert('🎉 Escrow Funded Successfully! Check your WhatsApp for the instant automated updates.'); window.close();</script>")
+    except Exception as e:
+        return f"Webhook Simulation Error: {e}"
+        
+
 @app.get("/admin/login", response_class=HTMLResponse)
 async def login_page():
     return """
@@ -1201,8 +1276,11 @@ async def receive_message(request: Request):
                         if text == "1":
                             update_order_status(order_id, "AWAITING_PAYMENT")
                             send_whatsapp_message(sender_phone, f"✅ Order #{order_id} confirmed. Prompting the buyer to complete escrow deposit.")
-                            monime_checkout_url = f"https://checkout.monime.io/payment?order={order_id}"
-                            send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\nPlease process your payment securely to our escrow container using the link below:\n🔗 {monime_checkout_url}\n\n_Funds will remain safely locked until you confirm delivery receipt!_")
+                            
+                            # DYNAMIC CHECKOUT PAYLINK: Points directly to your live production instance wrapper!
+                            simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
+                            
+                            send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\nPlease process your payment securely to our escrow container using the link below:\n🔗 {simulated_paylink}\n\n_Funds will remain safely locked until you confirm delivery receipt!_")
                             if pref == "delivery":
                                 update_session(sender_phone, "logistics_setup", "choose_option")
                                 send_whatsapp_message(sender_phone, "🚚 *Logistics Dispatch Selection*:\n\nHow would you like to handle shipping for this order?\n1️⃣ Use Platform Fleet (View Courier Services & Rates) 🏢\n2️⃣ Self-Delivery (Handle shipping paths personally) 🚶")
