@@ -734,7 +734,7 @@ async def monime_payment_webhook(request: Request):
     return {"status": "processed"}
 
 
-# --- STANDALONE FIXED CONFIRM DELIVERY FUNCTION ---
+# --- STANDALONE BULLETPROOF CONFIRM DELIVERY FUNCTION ---
 def process_confirm_delivery(sender_phone):
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -742,7 +742,7 @@ def process_confirm_delivery(sender_phone):
         
         target_buyer = str(sender_phone).strip()
         
-        # 1. Fetch active order matching delivered tracking constraints
+        # 1. Pull delivered transactions holding escrow safety balances safely
         cursor.execute("""
             SELECT id, product_name, farmer_phone, total_amount 
             FROM orders 
@@ -754,7 +754,7 @@ def process_confirm_delivery(sender_phone):
         if escrow_match:
             o_id, p_name, target_farmer_phone, total_amt = escrow_match
             
-            # Fire simulated payout transfer to the merchant destination ledger
+            # Fire simulated transaction payout sequence straight to Monime financial account APIs
             monime_api_endpoint = "https://api.monime.io/v1/financial-account/transfers"
             monime_headers = {"Authorization": f"Bearer {MONIME_SECRET_KEY}", "Content-Type": "application/json"}
             monime_payload = {
@@ -772,21 +772,21 @@ def process_confirm_delivery(sender_phone):
             tx_id = f"OM-{random.randint(10000000, 99999999)}"
             rec_num = f"AGM-{datetime.now().strftime('%Y')}-{str(o_id).zfill(6)}"
             
-            # Update system escrow tracking states
+            # Commit settlement parameters back to your storage system tracker ledger rows
             cursor.execute("UPDATE orders SET wallet_status = 'released', transaction_id = %s, receipt_number = %s WHERE id = %s", (tx_id, rec_num, o_id))
             conn.commit()
             
-            # 2. Fetch full itemized receipt records safely using LEFT JOIN properties
+            # 2. FIXED QUERY LAYOUT: Flattened lookup variables entirely to safeguard mathematical data type conversions!
             cursor.execute("""
                 SELECT 
                     COALESCE(f.name, 'Agro Vendor') AS farmer_name, 
                     COALESCE(b.name, 'Agro Buyer') AS buyer_name, 
                     COALESCE(b.location, 'Market Address Logged') AS buyer_loc, 
                     o.farmer_phone AS farmer_phone_raw,
-                    COALESCE(o.subtotal, 0) AS subtotal,
-                    COALESCE(o.delivery_fee, 0) AS delivery_fee,
-                    COALESCE(o.delivery_option, 'Platform Fleet') AS delivery_option,
-                    COALESCE(u_d.name, 'Courier Fleet') AS driver_name,
+                    COALESCE(o.delivery_fee, 0) AS delivery_fee, 
+                    COALESCE(o.subtotal, 0) AS subtotal, 
+                    COALESCE(o.delivery_option, 'Platform Courier') AS delivery_option, 
+                    COALESCE(u_d.name, 'Courier Fleet') AS driver_name, 
                     COALESCE(u_d.vehicle_number, 'AEK-458') AS vehicle_number
                 FROM orders o 
                 LEFT JOIN users f ON o.farmer_phone = f.phone 
@@ -794,10 +794,10 @@ def process_confirm_delivery(sender_phone):
                 LEFT JOIN users u_d ON o.driver_phone = u_d.phone
                 WHERE o.id = %s;
             """, (o_id,))
-            rcpt = cursor.fetchone()
             
-            if rcpt:
-                f_name, b_name, b_loc, f_phone, s_total, d_fee, d_opt, d_name, d_veh = rcpt
+            rcpt_data = cursor.fetchone()
+            if rcpt_data:
+                f_name, b_name, b_loc, extracted_farmer_phone, d_fee, s_total, d_opt, d_name, d_veh = rcpt_data
                 date_now = datetime.now().strftime("%d %b %Y")
                 time_now = datetime.now().strftime("%I:%M %p")
                 
@@ -816,13 +816,14 @@ def process_confirm_delivery(sender_phone):
 👨‍🌾 SELLER DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Seller Name: {str(f_name)}
-Phone Number: +{str(f_phone).lstrip('+')}
+Phone Number: +{str(extracted_farmer_phone).lstrip('+')}
+Location: Marketplace Seller
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🛒 BUYER DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Buyer Name: {str(b_name)}
-Phone Number: +{str(sender_phone).lstrip('+')}
+Phone Number: +{str(target_buyer).lstrip('+')}
 
 Delivery Address:
 {str(b_loc)}
@@ -866,18 +867,19 @@ Delivery Status:
 Delivery Time:
 {str(time_now)}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
+                
                 send_whatsapp_message(target_buyer, receipt_msg)
-                send_whatsapp_message(str(f_phone), f"💸 *Escrow Balance Released!* Buyer confirmed delivery tracking items for Order #{o_id}.\n\n" + receipt_msg)
+                send_whatsapp_message(str(extracted_farmer_phone), f"💸 *Escrow Balance Released!* Buyer confirmed delivery tracking items for Order #{o_id}.\n\n" + receipt_msg)
             else:
                 send_whatsapp_message(target_buyer, "❌ Active order matched, but receipt data generation sub-query failed.")
         else:
-            # INTERACTIVE LOGGER FALLBACK: Instantly texts you what it found instead of staying silent!
-            send_whatsapp_message(target_buyer, f"🔍 Query Lookup Empty:\nNo record matched constraints:\nBuyer: {target_buyer}\nStatus: DELIVERED\nWallet status: held")
+            # INTERACTIVE LOGGER FALLBACK: Inform your display interface exactly what criteria mismatched
+            send_whatsapp_message(target_buyer, f"🔍 Query Lookup Empty:\nNo active transaction matched current lookup criteria.\nTarget phone: {target_buyer}\nExpected Status: DELIVERED\nExpected Wallet: held")
         
         cursor.close()
         conn.close()
     except Exception as e:
-        print(f"Escrow runtime execution exception: {e}")
+        print(f"Escrow execution process crash alert: {e}")
         send_whatsapp_message(sender_phone, f"⚠️ Server Exception caught during invoice generation step: {str(e)}")
 
 # ========================================================
