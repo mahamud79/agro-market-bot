@@ -1193,15 +1193,25 @@ async def receive_message(request: Request):
                     try:
                         conn = psycopg2.connect(DATABASE_URL)
                         cursor = conn.cursor()
-                        cursor.execute("SELECT id, product_name, farmer_phone, total_amount FROM orders WHERE buyer_phone = %s AND status = 'DELIVERED' AND wallet_status = 'held' LIMIT 1", (sender_phone,))
+                        
+                        # 1. Query the first active delivered order matching escrow hold requirements
+                        cursor.execute("""
+                            SELECT id, product_name, farmer_phone, total_amount 
+                            FROM orders 
+                            WHERE buyer_phone = %s AND status = 'DELIVERED' AND wallet_status = 'held' 
+                            LIMIT 1
+                        """, (sender_phone,))
                         escrow_match = cursor.fetchone()
+                        
                         if escrow_match:
-                            o_id, p_name, f_phone, total_amt = escrow_match
+                            o_id, p_name, target_farmer_phone, total_amt = escrow_match
+                            
+                            # Fire simulated escrow payout transfer to the seller's destination ledger
                             monime_api_endpoint = "https://api.monime.io/v1/financial-account/transfers"
                             monime_headers = {"Authorization": f"Bearer {MONIME_SECRET_KEY}", "Content-Type": "application/json"}
                             monime_payload = {
                                 "source_account": "agro_market_escrow_holding",
-                                "destination_wallet": f"wallet_{f_phone}",
+                                "destination_wallet": f"wallet_{target_farmer_phone}",
                                 "amount": total_amt,
                                 "currency": "SLE",
                                 "metadata": {"order_id": o_id, "tracking_type": "escrow_payout"}
@@ -1211,19 +1221,24 @@ async def receive_message(request: Request):
                             
                             tx_id = f"OM-{random.randint(10000000, 99999999)}"
                             rec_num = f"AGM-{datetime.now().strftime('%Y')}-{str(o_id).zfill(6)}"
+                            
+                            # Finalize ledger statuses inside our system records
                             cursor.execute("UPDATE orders SET wallet_status = 'released', transaction_id = %s, receipt_number = %s WHERE id = %s", (tx_id, rec_num, o_id))
                             conn.commit()
                             
+                            # 2. SEAMLESS RELATIONAL LOOKUP: Maps individual name properties safely 
+                            # even if columns reference an identical phone string!
                             cursor.execute("""
                                 SELECT 
                                     COALESCE(f.name, 'Agro Vendor') AS farmer_name, 
                                     COALESCE(b.name, 'Agro Buyer') AS buyer_name, 
                                     COALESCE(b.location, 'Market Address Logged') AS buyer_loc, 
+                                    o.farmer_phone AS farmer_phone_raw,
                                     COALESCE(p.price, o.subtotal::varchar) AS price, 
                                     COALESCE(p.quantity, '1 Unit') AS quantity, 
-                                    o.delivery_fee, 
-                                    o.subtotal, 
-                                    o.delivery_option, 
+                                    COALESCE(o.delivery_fee, 0) AS delivery_fee, 
+                                    COALESCE(o.subtotal, 0) AS subtotal, 
+                                    COALESCE(o.delivery_option, 'Platform Courier') AS delivery_option, 
                                     COALESCE(u_d.name, 'Courier Fleet') AS driver_name, 
                                     COALESCE(u_d.vehicle_number, 'AEK-458') AS vehicle_number
                                 FROM orders o 
@@ -1233,12 +1248,14 @@ async def receive_message(request: Request):
                                 LEFT JOIN users u_d ON o.driver_phone = u_d.phone
                                 WHERE o.id = %s;
                             """, (o_id,))
-                            rcpt_data = cursor.fetchone()
-                            f_name, b_name, b_loc, p_price, p_qty, d_fee, s_total, d_opt, d_name, d_veh = rcpt_data
-                            date_now = datetime.now().strftime("%d %b %Y")
-                            time_now = datetime.now().strftime("%I:%M %p")
                             
-                            receipt_msg = f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                            rcpt_data = cursor.fetchone()
+                            if rcpt_data:
+                                f_name, b_name, b_loc, f_phone, p_price, p_qty, d_fee, s_total, d_opt, d_name, d_veh = rcpt_data
+                                date_now = datetime.now().strftime("%d %b %Y")
+                                time_now = datetime.now().strftime("%I:%M %p")
+                                
+                                receipt_msg = f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━
          AGRO MARKET 🌱
    Agricultural Marketplace
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1253,14 +1270,14 @@ async def receive_message(request: Request):
 👨‍🌾 SELLER DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Seller Name: {f_name}
-Phone Number: +{f_phone.lstrip('+')}
+Phone Number: +{str(f_phone).lstrip('+')}
 Location: Marketplace Seller
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🛒 BUYER DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Buyer Name: {b_name}
-Phone Number: +{sender_phone.lstrip('+')}
+Phone Number: +{str(sender_phone).lstrip('+')}
 
 Delivery Address:
 {b_loc}
@@ -1269,11 +1286,11 @@ Delivery Address:
 📦 ORDER DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Product: {p_name}
-Quantity: {p_qty if p_qty else '1 Unit'}
-Price Per Bag: {p_price if p_price else 'Market Value'}
+Quantity: {p_qty}
+Price Per Unit: {p_price}
 Subtotal: Le {s_total}
 
-Delivery Fee: Le {d_fee if d_fee else 0}
+Delivery Fee: Le {d_fee}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 💰 PAYMENT DETAILS
@@ -1293,13 +1310,13 @@ Transaction ID:
 🚚 DELIVERY DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Rider/Driver Name:
-{d_name if d_name else 'Self-Delivery'}
+{d_name}
 
 Vehicle Type:
-{d_opt if d_opt else 'Vendor Dispatch'}
+{d_opt}
 
 Vehicle Number:
-{d_veh if d_veh else 'N/A'}
+{d_veh}
 
 Delivery Status:
 ✅ DELIVERED & APPROVED BY BUYER
@@ -1310,21 +1327,17 @@ Delivery Time:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⭐ THANK YOU FOR USING
         AGRO MARKET
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-For support contact:
-📞 +232 XX XXX XXX
-📧 support@agromarket.sl
-🌐 www.agromarket.sl"""
-                            send_whatsapp_message(sender_phone, receipt_msg)
-                            send_whatsapp_message(f_phone, f"💸 *Escrow Balance Released!* Buyer confirmed delivery tracking items for Order #{o_id}.\n\n" + receipt_msg)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
+                                # Dispatch itemized invoice templates instantly down both data streams
+                                send_whatsapp_message(sender_phone, receipt_msg)
+                                send_whatsapp_message(str(f_phone), f"💸 *Escrow Balance Released!* Buyer confirmed delivery tracking items for Order #{o_id}.\n\n" + receipt_msg)
+                            else:
+                                send_whatsapp_message(sender_phone, "❌ Error loading delivery row arrays.")
                         else:
                             send_whatsapp_message(sender_phone, "❌ No pending order matching delivery approval requirements was logged for your device.")
+                        
                         cursor.close()
                         conn.close()
                     except Exception as e:
                         print(f"Escrow error validation tracker maps: {e}")
                         send_whatsapp_message(sender_phone, "Database timeout compiling receipt values.")
-    except Exception as e:
-        print(f"Error logic layer main arrays: {e}")
-    return {"status": "ok"}
