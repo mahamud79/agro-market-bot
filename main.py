@@ -505,7 +505,6 @@ def is_admin_authorized(request: Request):
 
 @app.get("/checkout/pay/{order_id}", response_class=HTMLResponse)
 async def checkout_payment_page(order_id: int):
-    # Fetch core total configurations to display on screen
     order_data = get_order_by_id(order_id)
     if not order_data:
         return "<h3>❌ Order registry entry not found inside current data records.</h3>"
@@ -549,7 +548,6 @@ async def checkout_payment_page(order_id: int):
 
 @app.post("/admin/api/simulate-webhook-trigger/{order_id}")
 async def simulate_webhook_trigger(order_id: int):
-    # This automatically calls your internal processing state machine to complete the transaction setup!
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
@@ -575,7 +573,6 @@ async def simulate_webhook_trigger(order_id: int):
         return HTMLResponse("<script>alert('🎉 Escrow Funded Successfully! Check your WhatsApp for the instant automated updates.'); window.close();</script>")
     except Exception as e:
         return f"Webhook Simulation Error: {e}"
-        
 
 @app.get("/admin/login", response_class=HTMLResponse)
 async def login_page():
@@ -772,43 +769,6 @@ async def admin_delete_price(price_id: int, request: Request):
     delete_market_price(price_id)
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
-# ========================================================
-# SIMULATED MONIME WEBHOOK ENDPOINT
-# ========================================================
-@app.post("/webhook/monime")
-async def monime_payment_webhook(request: Request):
-    payload = await request.json()
-    order_id = payload.get("metadata", {}).get("order_id")
-    event = payload.get("event")
-    
-    if event == "payment.success" and order_id:
-        try:
-            conn = psycopg2.connect(DATABASE_URL)
-            cursor = conn.cursor()
-            tx_id = payload.get("transaction_id", f"OM-{random.randint(10000000, 99999999)}")
-            rec_num = f"AGM-{datetime.now().strftime('%Y')}-{str(order_id).zfill(6)}"
-            
-            cursor.execute("""
-                UPDATE orders 
-                SET status = 'paid', transaction_id = %s, receipt_number = %s, wallet_status = 'held' 
-                WHERE id = %s RETURNING buyer_phone, farmer_phone, product_name, total_amount
-            """, (tx_id, rec_num, order_id))
-            res = cursor.fetchone()
-            conn.commit()
-            cursor.close()
-            conn.close()
-            
-            if res:
-                b_phone, f_phone, p_name, total_amt = res
-                success_msg = f"💳 *Payment Escrow Confirmed!* Le {total_amt} for your order of *{p_name}* has been successfully secured. Funds are locked safely until delivery verification."
-                send_whatsapp_message(b_phone, success_msg)
-                send_whatsapp_message(f_phone, f"💰 *Payment Received in Escrow!* The buyer has funded Order #{order_id} ({p_name}). Please process shipping configurations immediately.")
-        except Exception as e:
-            print(f"Monime Webhook Processing Error: {e}")
-            
-    return {"status": "processed"}
-
-
 # --- STANDALONE FIXED CONFIRM DELIVERY FUNCTION ---
 def process_confirm_delivery(sender_phone):
     try:
@@ -915,7 +875,6 @@ Delivery Time:
             if str(target_buyer) != str(target_farmer_phone):
                 send_whatsapp_message(str(target_farmer_phone), f"💸 *Escrow Balance Released!* Order #{o_id} complete.\n\n" + receipt_msg)
         else:
-            # INTERACTIVE LOGGER FALLBACK: Inform your display interface exactly what criteria mismatched
             send_whatsapp_message(target_buyer, f"🔍 Query Lookup Empty:\nNo active transaction matched current lookup criteria.\nTarget phone: {target_buyer}\nExpected Status: DELIVERED\nExpected Wallet: held")
         
         cursor.close()
@@ -1277,7 +1236,6 @@ async def receive_message(request: Request):
                             update_order_status(order_id, "AWAITING_PAYMENT")
                             send_whatsapp_message(sender_phone, f"✅ Order #{order_id} confirmed. Prompting the buyer to complete escrow deposit.")
                             
-                            # DYNAMIC CHECKOUT PAYLINK: Points directly to your live production instance wrapper!
                             simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
                             
                             send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\nPlease process your payment securely to our escrow container using the link below:\n🔗 {simulated_paylink}\n\n_Funds will remain safely locked until you confirm delivery receipt!_")
