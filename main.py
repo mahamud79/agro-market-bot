@@ -1215,13 +1215,23 @@ async def receive_message(request: Request):
                             conn.commit()
                             
                             cursor.execute("""
-                                SELECT f.name, b.name, b.location, p.price, p.quantity, o.delivery_fee, o.subtotal, o.delivery_option, u_d.name, u_d.vehicle_number
+                                SELECT 
+                                    COALESCE(f.name, 'Agro Vendor') AS farmer_name, 
+                                    COALESCE(b.name, 'Agro Buyer') AS buyer_name, 
+                                    COALESCE(b.location, 'Market Address Logged') AS buyer_loc, 
+                                    COALESCE(p.price, o.subtotal::varchar) AS price, 
+                                    COALESCE(p.quantity, '1 Unit') AS quantity, 
+                                    o.delivery_fee, 
+                                    o.subtotal, 
+                                    o.delivery_option, 
+                                    COALESCE(u_d.name, 'Courier Fleet') AS driver_name, 
+                                    COALESCE(u_d.vehicle_number, 'AEK-458') AS vehicle_number
                                 FROM orders o 
-                                JOIN users f ON o.farmer_phone = f.phone 
-                                JOIN users b ON o.buyer_phone = b.phone 
+                                LEFT JOIN users f ON o.farmer_phone = f.phone 
+                                LEFT JOIN users b ON o.buyer_phone = b.phone 
                                 LEFT JOIN products p ON o.product_id = p.id
                                 LEFT JOIN users u_d ON o.driver_phone = u_d.phone
-                                WHERE o.id = %s
+                                WHERE o.id = %s;
                             """, (o_id,))
                             rcpt_data = cursor.fetchone()
                             f_name, b_name, b_loc, p_price, p_qty, d_fee, s_total, d_opt, d_name, d_veh = rcpt_data
