@@ -1194,7 +1194,7 @@ async def receive_message(request: Request):
                         conn = psycopg2.connect(DATABASE_URL)
                         cursor = conn.cursor()
                         
-                        # 1. Query the first active delivered order matching escrow hold requirements
+                        # 1. Look up the delivered order holding funds in escrow
                         cursor.execute("""
                             SELECT id, product_name, farmer_phone, total_amount 
                             FROM orders 
@@ -1206,7 +1206,7 @@ async def receive_message(request: Request):
                         if escrow_match:
                             o_id, p_name, target_farmer_phone, total_amt = escrow_match
                             
-                            # Fire simulated escrow payout transfer to the seller's destination ledger
+                            # 2. Fire escrow payout request directly to Monime API endpoints
                             monime_api_endpoint = "https://api.monime.io/v1/financial-account/transfers"
                             monime_headers = {"Authorization": f"Bearer {MONIME_SECRET_KEY}", "Content-Type": "application/json"}
                             monime_payload = {
@@ -1216,18 +1216,19 @@ async def receive_message(request: Request):
                                 "currency": "SLE",
                                 "metadata": {"order_id": o_id, "tracking_type": "escrow_payout"}
                             }
-                            try: requests.post(monime_api_endpoint, headers=monime_headers, json=monime_payload, timeout=5)
-                            except: pass
+                            try:
+                                requests.post(monime_api_endpoint, headers=monime_headers, json=monime_payload, timeout=5)
+                            except Exception as api_err:
+                                print(f"Monime Transfer API warning: {api_err}")
                             
                             tx_id = f"OM-{random.randint(10000000, 99999999)}"
                             rec_num = f"AGM-{datetime.now().strftime('%Y')}-{str(o_id).zfill(6)}"
                             
-                            # Finalize ledger statuses inside our system records
+                            # 3. Finalize statuses inside the application ledger records
                             cursor.execute("UPDATE orders SET wallet_status = 'released', transaction_id = %s, receipt_number = %s WHERE id = %s", (tx_id, rec_num, o_id))
                             conn.commit()
                             
-                            # 2. SEAMLESS RELATIONAL LOOKUP: Maps individual name properties safely 
-                            # even if columns reference an identical phone string!
+                            # 4. Pull out all formatting fields safely via error-tolerant LEFT JOIN selectors
                             cursor.execute("""
                                 SELECT 
                                     COALESCE(f.name, 'Agro Vendor') AS farmer_name, 
@@ -1328,16 +1329,16 @@ Delivery Time:
 ⭐ THANK YOU FOR USING
         AGRO MARKET
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
-                                # Dispatch itemized invoice templates instantly down both data streams
+                                # Send messages immediately down both tracking paths
                                 send_whatsapp_message(sender_phone, receipt_msg)
                                 send_whatsapp_message(str(f_phone), f"💸 *Escrow Balance Released!* Buyer confirmed delivery tracking items for Order #{o_id}.\n\n" + receipt_msg)
                             else:
-                                send_whatsapp_message(sender_phone, "❌ Error loading delivery row arrays.")
+                                send_whatsapp_message(sender_phone, "❌ Error constructing delivery row metadata vector shapes.")
                         else:
                             send_whatsapp_message(sender_phone, "❌ No pending order matching delivery approval requirements was logged for your device.")
                         
                         cursor.close()
                         conn.close()
                     except Exception as e:
-                        print(f"Escrow error validation tracker maps: {e}")
-                        send_whatsapp_message(sender_phone, "Database timeout compiling receipt values.")
+                        print(f"Escrow runtime execution exception: {e}")
+                        send_whatsapp_message(sender_phone, "System tracking error compiling receipt arrays.")
