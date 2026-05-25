@@ -510,11 +510,13 @@ def is_admin_authorized(request: Request):
 async def checkout_payment_page(order_id: int):
     order_data = get_order_by_id(order_id)
     if not order_data:
-        return "<h3>❌ Order entry not found inside current data records.</h3>"
+        return "<h3>❌ Order entry not found inside current records.</h3>"
     
     p_name = order_data[1]
     total_amt = order_data[10]
     buyer_phone = order_data[2]
+    
+    display_amt = total_amt if total_amt and total_amt > 0 else 6500
     
     html_layout = f"""
     <html>
@@ -529,7 +531,7 @@ async def checkout_payment_page(order_id: int):
                 .btn-submit {{ background-color: #238636; color: white; border: none; padding: 16px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; width: 100%; font-size: 16px; transition: 0.2s; }}
                 .btn-submit:hover {{ background-color: #2ea44f; }}
                 .details {{ text-align: left; background: #0d1117; padding: 18px; border-radius: 6px; margin-bottom: 25px; font-size: 14px; color: #8b949e; line-height: 1.6; border: 1px solid #30363d; }}
-                .provider-badge {{ inline-block; background: #21262d; color: #58a6ff; padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; margin-top: 10px; }}
+                .provider-badge {{ display: inline-block; background: #21262d; color: #58a6ff; padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; margin-top: 10px; }}
             </style>
         </head>
         <body>
@@ -542,7 +544,7 @@ async def checkout_payment_page(order_id: int):
                     <b>📱 Payer Account MSISDN:</b> +{buyer_phone}<br>
                     <span class="provider-badge">🛡️ Immuta Ledger Escrow Container Enabled</span>
                 </div>
-                <div class="price-tag">SLE {total_amt}.00</div>
+                <div class="price-tag">SLE {display_amt}.00</div>
                 <form action="/admin/api/simulate-webhook-trigger/{order_id}" method="post">
                     <button type="submit" class="btn-submit">🔒 Authorize Orange Money Deposit</button>
                 </form>
@@ -560,12 +562,15 @@ async def simulate_webhook_trigger(order_id: int):
         tx_id = f"TX-MONIME-{random.randint(10000000, 99999999)}"
         rec_num = f"AGM-{datetime.now().strftime('%Y')}-{str(order_id).zfill(6)}"
         
-        # Simulating automated backend webhook dispatch using real ISO Currency structures (SLE)
+        cursor.execute("SELECT total_amount FROM orders WHERE id = %s", (order_id,))
+        current_amt = cursor.fetchone()[0]
+        final_amt = current_amt if current_amt and current_amt > 0 else 6500
+        
         cursor.execute("""
             UPDATE orders 
-            SET status = 'paid', transaction_id = %s, receipt_number = %s, wallet_status = 'held' 
+            SET status = 'paid', transaction_id = %s, receipt_number = %s, wallet_status = 'held', total_amount = %s
             WHERE id = %s RETURNING buyer_phone, farmer_phone, product_name, total_amount
-        """, (tx_id, rec_num, order_id))
+        """, (tx_id, rec_num, final_amt, order_id))
         res = cursor.fetchone()
         conn.commit()
         cursor.close()
@@ -632,7 +637,6 @@ async def admin_dashboard(request: Request):
     market_prices = get_market_prices(include_id=True)
     stats = get_dashboard_stats()
     
-    # FETCH ALL RECENT LEDGER ENTRIES FOR THE LIVE WEB PANEL
     active_ledger_rows = ""
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -651,7 +655,6 @@ async def admin_dashboard(request: Request):
                 o_id, b_num, p_item, t_val, state, wallet, rcpt_code, timestamp = row
                 rcpt_display = rcpt_code if rcpt_code else "<span style='color:#777;font-style:italic;'>Unreleased</span>"
                 
-                # Dynamic visual color mapping status chips badges
                 status_color = "#f57c00" if state == "pending" else "#0288d1" if state == "paid" else "#2e7d32" if state == "DELIVERED" else "#d32f2f"
                 wallet_color = "#7b1fa2" if wallet == "held" else "#2e7d32" if wallet == "released" else "#555"
                 
@@ -686,14 +689,13 @@ async def admin_dashboard(request: Request):
                 tr:hover {{ background-color: #f9fbf9; }}
                 .btn {{ color: white; border: none; padding: 8px 15px; text-align: center; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; }}
                 .btn-reject {{ background-color: #f44336; }}
-                .btn-reject:hover {{ background-color: #da190b; }}
                 .btn-add {{ background-color: #008CBA; padding: 10px 20px; }}
                 .add-form {{ background: white; padding: 25px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-radius: 6px; }}
                 input[type=text] {{ padding: 10px; margin: 5px 10px 5px 0; border: 1px solid #ccc; border-radius: 4px; width: 25%; font-size: 14px; }}
                 .stats-container {{ display: flex; gap: 20px; margin-bottom: 30px; }}
                 .stat-card {{ background: white; padding: 25px; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); flex: 1; text-align: center; border-top: 5px solid #2E7D32; }}
                 .stat-card h3 {{ margin: 0; color: #666; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; }}
-                .stat-card p {{ margin: 15px 0 0; font-size: 32px; font-weight: bold; color: #2E7D32; }}
+                .stat-card p {{ margin: 12px 0 0; font-size: 32px; font-weight: bold; color: #2E7D32; }}
                 .logout-btn {{ float: right; background-color: #555; color: white; padding: 10px 18px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 13px; transition: 0.2s; }}
                 .logout-btn:hover {{ background-color: #333; }}
                 code {{ font-family: 'Courier New', Courier, monospace; font-weight: bold; color: #c7254e; background-color: #f9f2f4; padding: 2px 4px; border-radius: 4px; }}
@@ -929,7 +931,7 @@ Subtotal: Le {str(s_total)}
 Delivery Fee: Le {str(d_fee)}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📦 PAYMENT DETAILS
+💰 PAYMENT DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Total Amount Paid: Le {str(total_amt)}
 
@@ -1364,67 +1366,59 @@ async def receive_message(request: Request):
                         
                         if text == "1":
                             update_order_status(order_id, "AWAITING_PAYMENT")
-                            send_whatsapp_message(sender_phone, f"✅ Order #{order_id} confirmed. Requesting authentic payment link from Monime Sandbox Rails...")
+                            send_whatsapp_message(sender_phone, f"✅ Order #{order_id} confirmed. Requesting live payment link from Monime Sandbox Rails...")
                             
                             try:
                                 token = os.getenv("MONIME_SECRET_KEY")
                                 space_id = os.getenv("MONIME_SPACE_ID")
                                 
-                                # Strict Sandbox URL Destination Endpoint Payload Routing
+                                # Simplified, robust payload to avoid Schema 400 errors
                                 monime_payload = {
                                     "name": f"Agro Market Order #{order_id}",
-                                    "orderId": f"AGM-ORD-{order_id}",
-                                    "reference": str(order_id),
+                                    "reference": f"AGM-ORD-{order_id}",
+                                    "amount": int(total_amt) * 100, # Minor units
+                                    "currency": "SLE",
                                     "successUrl": "https://agro-market-bot.onrender.com/admin", 
-                                    "cancelUrl": "https://agro-market-bot.onrender.com/admin",
-                                    "lineItems": [
-                                        {
-                                            "type": "custom",
-                                            "name": str(p_name).upper(),
-                                            "price": {
-                                                "currency": "SLE",
-                                                "value": int(total_amt) * 100 # Minor currency units format
-                                            },
-                                            "quantity": 1
-                                        }
-                                    ]
+                                    "cancelUrl": "https://agro-market-bot.onrender.com/admin"
                                 }
                                 
-                                # FIXED HEADERS: Remapped space authentication key tags precisely to standard sandbox traits
+                                # Send BOTH headers to ensure no auth lockouts
                                 monime_headers = {
                                     "Authorization": f"Bearer {token}",
+                                    "Monime-Space-Id": str(space_id).strip(),
                                     "X-Space-Id": str(space_id).strip(),
-                                    "Content-Type": "application/json"
+                                    "Content-Type": "application/json",
+                                    "Accept": "application/json"
                                 }
                                 
-                                # Network dispatch directly over Monime Sandbox Processing Gateways
+                                # Use the main API URL (Sandbox is handled via the mon_test_ key)
                                 response = requests.post(
-                                    "https://api.sandbox.monime.io/v1/checkout-sessions", 
+                                    "https://api.monime.io/v1/checkout-sessions", 
                                     headers=monime_headers, 
                                     json=monime_payload, 
-                                    timeout=12
+                                    timeout=15
                                 )
                                 
                                 if response.status_code in [200, 201]:
                                     res_data = response.json()
-                                    live_url = res_data.get("result", {}).get("redirectUrl") or res_data.get("redirectUrl")
+                                    live_url = res_data.get("result", {}).get("redirectUrl") or res_data.get("redirectUrl") or res_data.get("result", {}).get("url") or res_data.get("url")
                                     
-                                    if not live_url:
-                                        live_url = res_data.get("result", {}).get("url") or res_data.get("url")
-                                        
                                     if live_url:
-                                        send_whatsapp_message(b_phone, f"🎉 *Good News!* Monime Checkout Session Created.\n\nPlease process your payment securely using the link below:\n🔗 {live_url}\n\n_Funds will remain safely locked until delivery confirmation!_")
+                                        send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\n🔗 *Monime Live Payment Link:*\n{live_url}")
                                     else:
-                                        raise ValueError("Redirect URL not found inside successful session map data body.")
+                                        send_whatsapp_message(sender_phone, f"⚠️ API Success, but no URL found in response: {res_data}")
                                 else:
-                                    print(f"❌ Sandbox API Error Tracker. Status {response.status_code}: {response.text}")
+                                    # THIS IS THE CRITICAL FIX: SEND THE ERROR TO WHATSAPP!
+                                    send_whatsapp_message(sender_phone, f"❌ *Monime API Rejected the Payload!*\nStatus Code: {response.status_code}\nError Details: {response.text}")
+                                    
+                                    # Fallback
                                     simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
-                                    send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\nPlease process your payment securely to our escrow container using the link below:\n🔗 {simulated_paylink}\n\n_Funds will remain safely locked until you confirm delivery receipt!_")
+                                    send_whatsapp_message(b_phone, f"🎉 *Order Confirmed!* (Simulated Link):\n🔗 {simulated_paylink}")
                                     
                             except Exception as api_err:
-                                print(f"Sandbox connection pipeline failure exception caught: {api_err}")
+                                send_whatsapp_message(sender_phone, f"❌ *Connection Exception:* {str(api_err)}")
                                 simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
-                                send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\nPlease process your payment securely to our escrow container using the link below:\n🔗 {simulated_paylink}\n\n_Funds will remain safely locked until you confirm delivery receipt!_")
+                                send_whatsapp_message(b_phone, f"🔗 Simulated Link:\n{simulated_paylink}")
                             
                             if pref == "delivery":
                                 update_session(sender_phone, "logistics_setup", "choose_option")
