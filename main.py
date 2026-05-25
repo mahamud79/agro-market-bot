@@ -513,7 +513,6 @@ async def checkout_payment_page(order_id: int):
     total_amt = order_data[10]
     buyer_phone = order_data[2]
     
-    # PRODUCTION READY MONIME REDIRECT INTERFACE
     html_layout = f"""
     <html>
         <head>
@@ -558,7 +557,6 @@ async def simulate_webhook_trigger(order_id: int):
         tx_id = f"TX-MONIME-{random.randint(10000000, 99999999)}"
         rec_num = f"AGM-{datetime.now().strftime('%Y')}-{str(order_id).zfill(6)}"
         
-        # Simulating automated backend webhook dispatch using real ISO Currency structures (SLE)
         cursor.execute("""
             UPDATE orders 
             SET status = 'paid', transaction_id = %s, receipt_number = %s, wallet_status = 'held' 
@@ -906,6 +904,50 @@ Delivery Time:
     except Exception as e:
         print(f"Escrow runtime execution exception: {e}")
         send_whatsapp_message(sender_phone, f"⚠️ Server Exception caught during invoice generation step: {str(e)}")
+
+
+# ========================================================
+# LIVE PRODUCTION MONIME WEBHOOK ENDPOINT
+# ========================================================
+@app.post("/webhook/monime")
+async def monime_payment_webhook(request: Request):
+    payload = await request.json()
+    
+    # Extracting the tracking parameters using Monime's specific nested JSON keys
+    event = payload.get("event")
+    result_obj = payload.get("result", {})
+    
+    # Access order reference data out of their structural object map metadata properties
+    order_id = result_obj.get("reference") or payload.get("metadata", {}).get("order_id")
+    
+    if (event == "payment.success" or event == "checkout_session.completed") and order_id:
+        try:
+            conn = psycopg2.connect(DATABASE_URL)
+            cursor = conn.cursor()
+            
+            # Read unique platform parameters straight off Monime's inbound ledger response
+            tx_id = result_obj.get("id") or result_obj.get("transaction_id") or f"OM-{random.randint(10000000, 99999999)}"
+            rec_num = result_obj.get("orderNumber") or f"AGM-{datetime.now().strftime('%Y')}-{str(order_id).zfill(6)}"
+            
+            cursor.execute("""
+                UPDATE orders 
+                SET status = 'paid', transaction_id = %s, receipt_number = %s, wallet_status = 'held' 
+                WHERE id = %s RETURNING buyer_phone, farmer_phone, product_name, total_amount
+            """, (str(tx_id), str(rec_num), int(order_id)))
+            res = cursor.fetchone()
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            if res:
+                b_phone, f_phone, p_name, total_amt = res
+                success_msg = f"💳 *Payment Escrow Confirmed!* Le {total_amt} for your order of *{p_name}* has been successfully secured via Monime. Funds are locked safely until delivery verification."
+                send_whatsapp_message(b_phone, success_msg)
+                send_whatsapp_message(f_phone, f"💰 *Payment Received in Escrow!* The buyer has funded Order #{order_id} ({p_name}). Please process shipping configurations immediately.")
+        except Exception as e:
+            print(f"Monime Live Webhook Error: {e}")
+            
+    return {"status": "processed"}
 
 # ========================================================
 # MAIN WEBHOOK - ALL FEATURES + TEXT NAVIGATION
@@ -1255,14 +1297,61 @@ async def receive_message(request: Request):
                         b_phone = order_details[2] if order_details else ""
                         p_name = order_details[1] if order_details else "item"
                         pref = order_details[5] if order_details else "pickup"
+                        total_amt = order_details[10] if order_details else 0
                         
                         if text == "1":
                             update_order_status(order_id, "AWAITING_PAYMENT")
-                            send_whatsapp_message(sender_phone, f"✅ Order #{order_id} confirmed. Prompting the buyer to complete escrow deposit.")
+                            send_whatsapp_message(sender_phone, f"✅ Order #{order_id} confirmed. Initializing secure checkout sequence via Monime...")
                             
-                            simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
+                            # REAL PRODUCTION API CALL FOR INTENT SESSION CREATION
+                            try:
+                                token = os.getenv("MONIME_SECRET_KEY")
+                                space_id = os.getenv("MONIME_SPACE_ID")
+                                
+                                monime_payload = {
+                                    "name": f"Agro Market Order #{order_id}",
+                                    "orderId": f"AGM-ORD-{order_id}",
+                                    "reference": str(order_id),
+                                    "successUrl": "https://agro-market-bot.onrender.com/checkout/success",
+                                    "cancelUrl": "https://agro-market-bot.onrender.com/checkout/cancel",
+                                    "lineItems": [
+                                        {
+                                            "type": "custom",
+                                            "name": str(p_name).upper(),
+                                            "price": {
+                                                "currency": "SLE",
+                                                "value": int(total_amt) * 100
+                                            },
+                                            "quantity": 1
+                                        }
+                                    ]
+                                }
+                                
+                                monime_headers = {
+                                    "Authorization": f"Bearer {token}",
+                                    "Monime-Space-Id": space_id,
+                                    "Content-Type": "application/json"
+                                }
+                                
+                                response = requests.post(
+                                    "https://api.monime.io/v1/checkout-sessions", 
+                                    headers=monime_headers, 
+                                    json=monime_payload, 
+                                    timeout=10
+                                )
+                                
+                                if response.status_code in [200, 201]:
+                                    res_data = response.json()
+                                    live_checkout_url = res_data.get("result", {}).get("redirectUrl", res_data.get("redirectUrl"))
+                                    send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\nPlease process your payment securely to our escrow container using the link below:\n🔗 {live_checkout_url}\n\n_Funds will remain safely locked until you confirm delivery receipt!_")
+                                else:
+                                    print(f"Monime API Error: {response.text}")
+                                    send_whatsapp_message(b_phone, "⚠️ Monime gateway creation encountered an error. Please try again shortly.")
+                                    
+                            except Exception as api_err:
+                                print(f"Gateway failure: {api_err}")
+                                send_whatsapp_message(sender_phone, "❌ External checkout session could not be established.")
                             
-                            send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\nPlease process your payment securely to our escrow container using the link below:\n🔗 {simulated_paylink}\n\n_Funds will remain safely locked until you confirm delivery receipt!_")
                             if pref == "delivery":
                                 update_session(sender_phone, "logistics_setup", "choose_option")
                                 send_whatsapp_message(sender_phone, "🚚 *Logistics Dispatch Selection*:\n\nHow would you like to handle shipping for this order?\n1️⃣ Use Platform Fleet (View Courier Services & Rates) 🏢\n2️⃣ Self-Delivery (Handle shipping paths personally) 🚶")
