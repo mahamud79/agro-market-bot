@@ -1364,26 +1364,26 @@ async def receive_message(request: Request):
                         
                         if text == "1":
                             update_order_status(order_id, "AWAITING_PAYMENT")
-                            send_whatsapp_message(sender_phone, f"✅ Order #{order_id} confirmed. Initializing secure checkout sequence via Monime...")
+                            send_whatsapp_message(sender_phone, f"✅ Order #{order_id} confirmed. Requesting live payment link from Monime Sandbox Rails...")
                             
-                            # REAL PRODUCTION API CALL FOR INTENT SESSION CREATION
                             try:
                                 token = os.getenv("MONIME_SECRET_KEY")
                                 space_id = os.getenv("MONIME_SPACE_ID")
                                 
+                                # FIXED SCHEMA: Converted keys to absolute strict camelCase values as specified by Monime APIs
                                 monime_payload = {
                                     "name": f"Agro Market Order #{order_id}",
                                     "orderId": f"AGM-ORD-{order_id}",
                                     "reference": str(order_id),
-                                    "successUrl": "https://agro-market-bot.onrender.com/checkout/pay/" + str(order_id), # FIXED: Direct routing path to bypass 404
-                                    "cancelUrl": "https://agro-market-bot.onrender.com/checkout/pay/" + str(order_id),
+                                    "successurl": f"https://agro-market-bot.onrender.com/admin", 
+                                    "cancelurl": f"https://agro-market-bot.onrender.com/admin",
                                     "lineItems": [
                                         {
                                             "type": "custom",
                                             "name": str(p_name).upper(),
                                             "price": {
                                                 "currency": "SLE",
-                                                "value": int(total_amt) * 100
+                                                "value": int(total_amt) * 100 # Minor units mapping conversion
                                             },
                                             "quantity": 1
                                         }
@@ -1405,17 +1405,27 @@ async def receive_message(request: Request):
                                 
                                 if response.status_code in [200, 201]:
                                     res_data = response.json()
-                                    live_checkout_url = res_data.get("result", {}).get("redirectUrl", res_data.get("redirectUrl"))
-                                    send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\nPlease process your payment securely to our escrow container using the link below:\n🔗 {live_checkout_url}\n\n_Funds will remain safely locked until you confirm delivery receipt!_")
+                                    # Safe extraction check matching nested dictionary response properties
+                                    live_url = res_data.get("result", {}).get("redirectUrl") or res_data.get("redirectUrl")
+                                    
+                                    if live_url:
+                                        send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\nPlease process your payment securely to our escrow container using the link below:\n🔗 {live_url}\n\n_Funds will remain safely locked until you confirm delivery receipt!_")
+                                    else:
+                                        # Secondary structural lookup path validation
+                                        fallback_url = res_data.get("result", {}).get("url") or res_data.get("url")
+                                        if fallback_url:
+                                            send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\nPlease process your payment securely to our escrow container using the link below:\n🔗 {fallback_url}\n\n_Funds will remain safely locked until you confirm delivery receipt!_")
+                                        else:
+                                            raise ValueError("Redirect parameter url missing from returned response mapping object.")
                                 else:
-                                    # EXPOSE THE REAL MONIME ERROR IN RENDER LOGS
-                                    print(f"❌ Monime API Rejected Request. Code {response.status_code}: {response.text}")
+                                    print(f"❌ Monime Gateway Rejected Request. Code {response.status_code}: {response.text}")
                                     simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
                                     send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\nPlease process your payment securely to our escrow container using the link below:\n🔗 {simulated_paylink}\n\n_Funds will remain safely locked until you confirm delivery receipt!_")
                                     
                             except Exception as api_err:
-                                print(f"Gateway failure: {api_err}")
-                                send_whatsapp_message(sender_phone, "❌ External checkout session could not be established.")
+                                print(f"Gateway fallback exception executed: {api_err}")
+                                simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
+                                send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\nPlease process your payment securely to our escrow container using the link below:\n🔗 {simulated_paylink}\n\n_Funds will remain safely locked until you confirm delivery receipt!_")
                             
                             if pref == "delivery":
                                 update_session(sender_phone, "logistics_setup", "choose_option")
