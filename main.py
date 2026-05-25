@@ -20,7 +20,7 @@ WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 ADMIN_PHONE = os.getenv("ADMIN_PHONE")
 MONIME_SECRET_KEY = os.getenv("MONIME_SECRET_KEY")
-MONIME_SPACE_ID = os.getenv("MONIME_SPACE_ID") # FIXED: Added to environment architecture variables
+MONIME_SPACE_ID = os.getenv("MONIME_SPACE_ID")
 
 @app.on_event("startup")
 async def startup_event():
@@ -223,7 +223,6 @@ def create_order(buyer_phone, product_id, preference, payment_method):
         clean_price = int(''.join(filter(str.isdigit, str(price)))) if any(c.isdigit() for c in str(price)) else 1500
         clean_qty = int(''.join(filter(str.isdigit, str(quantity)))) if any(c.isdigit() for c in str(quantity)) else 1
         
-        # FIXED: Ensure fresh test orders never evaluate to zero total balances
         if clean_price == 0: clean_price = 1500
         subtotal = clean_price * clean_qty
         
@@ -489,6 +488,9 @@ def get_dashboard_stats():
 # SECURE ADMIN WEB DASHBOARD ROUTES
 # ========================================================
 
+def hash_password(password: str):
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
 def is_admin_authorized(request: Request):
     session_cookie = request.cookies.get("secure_admin_session")
     if not session_cookie: return False
@@ -508,14 +510,11 @@ def is_admin_authorized(request: Request):
 async def checkout_payment_page(order_id: int):
     order_data = get_order_by_id(order_id)
     if not order_data:
-        return "<h3>❌ Order entry not found inside current records.</h3>"
+        return "<h3>❌ Order entry not found inside current data records.</h3>"
     
     p_name = order_data[1]
     total_amt = order_data[10]
     buyer_phone = order_data[2]
-    
-    # FIXED: Ensure total amount is fetched from database to reflect on screen
-    display_amt = total_amt if total_amt and total_amt > 0 else 6500
     
     html_layout = f"""
     <html>
@@ -530,7 +529,7 @@ async def checkout_payment_page(order_id: int):
                 .btn-submit {{ background-color: #238636; color: white; border: none; padding: 16px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; width: 100%; font-size: 16px; transition: 0.2s; }}
                 .btn-submit:hover {{ background-color: #2ea44f; }}
                 .details {{ text-align: left; background: #0d1117; padding: 18px; border-radius: 6px; margin-bottom: 25px; font-size: 14px; color: #8b949e; line-height: 1.6; border: 1px solid #30363d; }}
-                .provider-badge {{ display: inline-block; background: #21262d; color: #58a6ff; padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; margin-top: 10px; }}
+                .provider-badge {{ inline-block; background: #21262d; color: #58a6ff; padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; margin-top: 10px; }}
             </style>
         </head>
         <body>
@@ -543,7 +542,7 @@ async def checkout_payment_page(order_id: int):
                     <b>📱 Payer Account MSISDN:</b> +{buyer_phone}<br>
                     <span class="provider-badge">🛡️ Immuta Ledger Escrow Container Enabled</span>
                 </div>
-                <div class="price-tag">SLE {display_amt}.00</div>
+                <div class="price-tag">SLE {total_amt}.00</div>
                 <form action="/admin/api/simulate-webhook-trigger/{order_id}" method="post">
                     <button type="submit" class="btn-submit">🔒 Authorize Orange Money Deposit</button>
                 </form>
@@ -561,15 +560,12 @@ async def simulate_webhook_trigger(order_id: int):
         tx_id = f"TX-MONIME-{random.randint(10000000, 99999999)}"
         rec_num = f"AGM-{datetime.now().strftime('%Y')}-{str(order_id).zfill(6)}"
         
-        cursor.execute("SELECT total_amount FROM orders WHERE id = %s", (order_id,))
-        current_amt = cursor.fetchone()[0]
-        final_amt = current_amt if current_amt and current_amt > 0 else 6500
-        
+        # Simulating automated backend webhook dispatch using real ISO Currency structures (SLE)
         cursor.execute("""
             UPDATE orders 
-            SET status = 'paid', transaction_id = %s, receipt_number = %s, wallet_status = 'held', total_amount = %s
+            SET status = 'paid', transaction_id = %s, receipt_number = %s, wallet_status = 'held' 
             WHERE id = %s RETURNING buyer_phone, farmer_phone, product_name, total_amount
-        """, (tx_id, rec_num, final_amt, order_id))
+        """, (tx_id, rec_num, order_id))
         res = cursor.fetchone()
         conn.commit()
         cursor.close()
@@ -636,6 +632,7 @@ async def admin_dashboard(request: Request):
     market_prices = get_market_prices(include_id=True)
     stats = get_dashboard_stats()
     
+    # FETCH ALL RECENT LEDGER ENTRIES FOR THE LIVE WEB PANEL
     active_ledger_rows = ""
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -654,6 +651,7 @@ async def admin_dashboard(request: Request):
                 o_id, b_num, p_item, t_val, state, wallet, rcpt_code, timestamp = row
                 rcpt_display = rcpt_code if rcpt_code else "<span style='color:#777;font-style:italic;'>Unreleased</span>"
                 
+                # Dynamic visual color mapping status chips badges
                 status_color = "#f57c00" if state == "pending" else "#0288d1" if state == "paid" else "#2e7d32" if state == "DELIVERED" else "#d32f2f"
                 wallet_color = "#7b1fa2" if wallet == "held" else "#2e7d32" if wallet == "released" else "#555"
                 
@@ -688,13 +686,14 @@ async def admin_dashboard(request: Request):
                 tr:hover {{ background-color: #f9fbf9; }}
                 .btn {{ color: white; border: none; padding: 8px 15px; text-align: center; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; }}
                 .btn-reject {{ background-color: #f44336; }}
+                .btn-reject:hover {{ background-color: #da190b; }}
                 .btn-add {{ background-color: #008CBA; padding: 10px 20px; }}
                 .add-form {{ background: white; padding: 25px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-radius: 6px; }}
                 input[type=text] {{ padding: 10px; margin: 5px 10px 5px 0; border: 1px solid #ccc; border-radius: 4px; width: 25%; font-size: 14px; }}
                 .stats-container {{ display: flex; gap: 20px; margin-bottom: 30px; }}
                 .stat-card {{ background: white; padding: 25px; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); flex: 1; text-align: center; border-top: 5px solid #2E7D32; }}
                 .stat-card h3 {{ margin: 0; color: #666; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; }}
-                .stat-card p {{ margin: 12px 0 0; font-size: 32px; font-weight: bold; color: #2E7D32; }}
+                .stat-card p {{ margin: 15px 0 0; font-size: 32px; font-weight: bold; color: #2E7D32; }}
                 .logout-btn {{ float: right; background-color: #555; color: white; padding: 10px 18px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 13px; transition: 0.2s; }}
                 .logout-btn:hover {{ background-color: #333; }}
                 code {{ font-family: 'Courier New', Courier, monospace; font-weight: bold; color: #c7254e; background-color: #f9f2f4; padding: 2px 4px; border-radius: 4px; }}
@@ -776,7 +775,7 @@ async def admin_dashboard(request: Request):
                     <td><b>{crop}</b></td><td>{loc}</td><td><b>{price}</b></td>
                     <td>
                         <form action="/admin/price/delete/{p_id}" method="post" style="margin:0;">
-                            <button type="submit" class="btn btn-reject">🗑️ Remove Entry</button>
+                            <button type="submit" class="btn btn-reject">Add Price to Dashboard</button>
                         </form>
                     </td>
                 </tr>
@@ -930,7 +929,7 @@ Subtotal: Le {str(s_total)}
 Delivery Fee: Le {str(d_fee)}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-💰 PAYMENT DETAILS
+📦 PAYMENT DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Total Amount Paid: Le {str(total_amt)}
 
@@ -1376,8 +1375,8 @@ async def receive_message(request: Request):
                                     "name": f"Agro Market Order #{order_id}",
                                     "orderId": f"AGM-ORD-{order_id}",
                                     "reference": str(order_id),
-                                    "successUrl": "https://agro-market-bot.onrender.com/checkout/success",
-                                    "cancelUrl": "https://agro-market-bot.onrender.com/checkout/cancel",
+                                    "successUrl": "https://agro-market-bot.onrender.com/checkout/pay/" + str(order_id), # FIXED: Direct routing path to bypass 404
+                                    "cancelUrl": "https://agro-market-bot.onrender.com/checkout/pay/" + str(order_id),
                                     "lineItems": [
                                         {
                                             "type": "custom",
