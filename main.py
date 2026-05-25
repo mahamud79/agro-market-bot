@@ -1375,8 +1375,8 @@ async def receive_message(request: Request):
                                     "name": f"Agro Market Order #{order_id}",
                                     "orderId": f"AGM-ORD-{order_id}",
                                     "reference": str(order_id),
-                                    "successurl": f"https://agro-market-bot.onrender.com/admin", 
-                                    "cancelurl": f"https://agro-market-bot.onrender.com/admin",
+                                    "successUrl": "https://agro-market-bot.onrender.com/admin", 
+                                    "cancelUrl": "https://agro-market-bot.onrender.com/admin",
                                     "lineItems": [
                                         {
                                             "type": "custom",
@@ -1411,7 +1411,7 @@ async def receive_message(request: Request):
                                     if live_url:
                                         send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\nPlease process your payment securely to our escrow container using the link below:\n🔗 {live_url}\n\n_Funds will remain safely locked until you confirm delivery receipt!_")
                                     else:
-                                        # Secondary structural lookup path validation
+                                        # Secondary structural lookup path validation fallback
                                         fallback_url = res_data.get("result", {}).get("url") or res_data.get("url")
                                         if fallback_url:
                                             send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\nPlease process your payment securely to our escrow container using the link below:\n🔗 {fallback_url}\n\n_Funds will remain safely locked until you confirm delivery receipt!_")
