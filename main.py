@@ -1364,13 +1364,13 @@ async def receive_message(request: Request):
                         
                         if text == "1":
                             update_order_status(order_id, "AWAITING_PAYMENT")
-                            send_whatsapp_message(sender_phone, f"✅ Order #{order_id} confirmed. Requesting live payment link from Monime Sandbox Rails...")
+                            send_whatsapp_message(sender_phone, f"✅ Order #{order_id} confirmed. Requesting authentic payment link from Monime Sandbox Rails...")
                             
                             try:
                                 token = os.getenv("MONIME_SECRET_KEY")
                                 space_id = os.getenv("MONIME_SPACE_ID")
                                 
-                                # FIXED SCHEMA: Converted keys to absolute strict camelCase values as specified by Monime APIs
+                                # Strict Sandbox URL Destination Endpoint Payload Routing
                                 monime_payload = {
                                     "name": f"Agro Market Order #{order_id}",
                                     "orderId": f"AGM-ORD-{order_id}",
@@ -1383,47 +1383,46 @@ async def receive_message(request: Request):
                                             "name": str(p_name).upper(),
                                             "price": {
                                                 "currency": "SLE",
-                                                "value": int(total_amt) * 100 # Minor units mapping conversion
+                                                "value": int(total_amt) * 100 # Minor currency units format
                                             },
                                             "quantity": 1
                                         }
                                     ]
                                 }
                                 
+                                # FIXED HEADERS: Remapped space authentication key tags precisely to standard sandbox traits
                                 monime_headers = {
                                     "Authorization": f"Bearer {token}",
-                                    "Monime-Space-Id": space_id,
+                                    "X-Space-Id": str(space_id).strip(),
                                     "Content-Type": "application/json"
                                 }
                                 
+                                # Network dispatch directly over Monime Sandbox Processing Gateways
                                 response = requests.post(
-                                    "https://api.monime.io/v1/checkout-sessions", 
+                                    "https://api.sandbox.monime.io/v1/checkout-sessions", 
                                     headers=monime_headers, 
                                     json=monime_payload, 
-                                    timeout=10
+                                    timeout=12
                                 )
                                 
                                 if response.status_code in [200, 201]:
                                     res_data = response.json()
-                                    # Safe extraction check matching nested dictionary response properties
                                     live_url = res_data.get("result", {}).get("redirectUrl") or res_data.get("redirectUrl")
                                     
+                                    if not live_url:
+                                        live_url = res_data.get("result", {}).get("url") or res_data.get("url")
+                                        
                                     if live_url:
-                                        send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\nPlease process your payment securely to our escrow container using the link below:\n🔗 {live_url}\n\n_Funds will remain safely locked until you confirm delivery receipt!_")
+                                        send_whatsapp_message(b_phone, f"🎉 *Good News!* Monime Checkout Session Created.\n\nPlease process your payment securely using the link below:\n🔗 {live_url}\n\n_Funds will remain safely locked until delivery confirmation!_")
                                     else:
-                                        # Secondary structural lookup path validation fallback
-                                        fallback_url = res_data.get("result", {}).get("url") or res_data.get("url")
-                                        if fallback_url:
-                                            send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\nPlease process your payment securely to our escrow container using the link below:\n🔗 {fallback_url}\n\n_Funds will remain safely locked until you confirm delivery receipt!_")
-                                        else:
-                                            raise ValueError("Redirect parameter url missing from returned response mapping object.")
+                                        raise ValueError("Redirect URL not found inside successful session map data body.")
                                 else:
-                                    print(f"❌ Monime Gateway Rejected Request. Code {response.status_code}: {response.text}")
+                                    print(f"❌ Sandbox API Error Tracker. Status {response.status_code}: {response.text}")
                                     simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
                                     send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\nPlease process your payment securely to our escrow container using the link below:\n🔗 {simulated_paylink}\n\n_Funds will remain safely locked until you confirm delivery receipt!_")
                                     
                             except Exception as api_err:
-                                print(f"Gateway fallback exception executed: {api_err}")
+                                print(f"Sandbox connection pipeline failure exception caught: {api_err}")
                                 simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
                                 send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\nPlease process your payment securely to our escrow container using the link below:\n🔗 {simulated_paylink}\n\n_Funds will remain safely locked until you confirm delivery receipt!_")
                             
