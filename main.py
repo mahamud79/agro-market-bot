@@ -367,7 +367,7 @@ def update_user_role(phone_number, role_id):
         cursor.execute("SELECT name, location FROM users WHERE phone = %s", (phone_number,))
         user = cursor.fetchone()
         if user and user[0] and user[1]:
-            cursor.execute("UPDATE user_sessions SET current_flow = 'main_menu', current_step = 'idle' WHERE phone = %s", (phonenumber,))
+            cursor.execute("UPDATE user_sessions SET current_flow = 'main_menu', current_step = 'idle' WHERE phone = %s", (phone_number,))
             is_registered = True
         else:
             next_step = 'awaiting_name'
@@ -502,6 +502,7 @@ def is_admin_authorized(request: Request):
         return True
     except: return False
 
+
 @app.get("/checkout/pay/{order_id}", response_class=HTMLResponse)
 async def checkout_payment_page(order_id: int):
     order_data = get_order_by_id(order_id)
@@ -609,7 +610,6 @@ async def process_login(request: Request):
         cursor.execute("SELECT password_hash FROM admin_auth WHERE phone = %s", (str(ADMIN_PHONE),))
         result = cursor.fetchone()
         
-        # NOTE: hash_password helper must be defined or imported
         if result and hashlib.sha256(password.encode('utf-8')).hexdigest() == result[0]:
             session_token = secrets.token_hex(32)
             cursor.execute("UPDATE admin_auth SET session_token = %s WHERE phone = %s", (session_token, str(ADMIN_PHONE)))
@@ -1405,9 +1405,9 @@ async def receive_message(request: Request):
                                 # FIX 1: Generate the exact required idempotency key format to prevent 400 Errors
                                 unique_idempotency_token = f"key_{order_id}_{secrets.token_hex(8)}"
                                 
+                                # FIXED SCHEMA: Removed 'orderId' as it is forbidden by Monime's strict schema
                                 monime_payload = {
                                     "name": f"Agro Market Order #{order_id}",
-                                    "orderId": f"AGM-ORD-{order_id}",
                                     "reference": str(order_id),
                                     "successUrl": "https://agro-market-bot.onrender.com/admin", 
                                     "cancelUrl": "https://agro-market-bot.onrender.com/admin",
