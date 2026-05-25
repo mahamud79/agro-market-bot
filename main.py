@@ -516,8 +516,6 @@ async def checkout_payment_page(order_id: int):
     total_amt = order_data[10]
     buyer_phone = order_data[2]
     
-    display_amt = total_amt if total_amt and total_amt > 0 else 6500
-    
     html_layout = f"""
     <html>
         <head>
@@ -531,7 +529,7 @@ async def checkout_payment_page(order_id: int):
                 .btn-submit {{ background-color: #238636; color: white; border: none; padding: 16px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; width: 100%; font-size: 16px; transition: 0.2s; }}
                 .btn-submit:hover {{ background-color: #2ea44f; }}
                 .details {{ text-align: left; background: #0d1117; padding: 18px; border-radius: 6px; margin-bottom: 25px; font-size: 14px; color: #8b949e; line-height: 1.6; border: 1px solid #30363d; }}
-                .provider-badge {{ display: inline-block; background: #21262d; color: #58a6ff; padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; margin-top: 10px; }}
+                .provider-badge {{ inline-block; background: #21262d; color: #58a6ff; padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; margin-top: 10px; }}
             </style>
         </head>
         <body>
@@ -544,7 +542,7 @@ async def checkout_payment_page(order_id: int):
                     <b>📱 Payer Account MSISDN:</b> +{buyer_phone}<br>
                     <span class="provider-badge">🛡️ Immuta Ledger Escrow Container Enabled</span>
                 </div>
-                <div class="price-tag">SLE {display_amt}.00</div>
+                <div class="price-tag">SLE {total_amt}.00</div>
                 <form action="/admin/api/simulate-webhook-trigger/{order_id}" method="post">
                     <button type="submit" class="btn-submit">🔒 Authorize Orange Money Deposit</button>
                 </form>
@@ -562,15 +560,11 @@ async def simulate_webhook_trigger(order_id: int):
         tx_id = f"TX-MONIME-{random.randint(10000000, 99999999)}"
         rec_num = f"AGM-{datetime.now().strftime('%Y')}-{str(order_id).zfill(6)}"
         
-        cursor.execute("SELECT total_amount FROM orders WHERE id = %s", (order_id,))
-        current_amt = cursor.fetchone()[0]
-        final_amt = current_amt if current_amt and current_amt > 0 else 6500
-        
         cursor.execute("""
             UPDATE orders 
-            SET status = 'paid', transaction_id = %s, receipt_number = %s, wallet_status = 'held', total_amount = %s
+            SET status = 'paid', transaction_id = %s, receipt_number = %s, wallet_status = 'held' 
             WHERE id = %s RETURNING buyer_phone, farmer_phone, product_name, total_amount
-        """, (tx_id, rec_num, final_amt, order_id))
+        """, (tx_id, rec_num, order_id))
         res = cursor.fetchone()
         conn.commit()
         cursor.close()
@@ -637,6 +631,7 @@ async def admin_dashboard(request: Request):
     market_prices = get_market_prices(include_id=True)
     stats = get_dashboard_stats()
     
+    # FETCH ALL RECENT LEDGER ENTRIES FOR THE LIVE WEB PANEL
     active_ledger_rows = ""
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -655,6 +650,7 @@ async def admin_dashboard(request: Request):
                 o_id, b_num, p_item, t_val, state, wallet, rcpt_code, timestamp = row
                 rcpt_display = rcpt_code if rcpt_code else "<span style='color:#777;font-style:italic;'>Unreleased</span>"
                 
+                # Dynamic visual color mapping status chips badges
                 status_color = "#f57c00" if state == "pending" else "#0288d1" if state == "paid" else "#2e7d32" if state == "DELIVERED" else "#d32f2f"
                 wallet_color = "#7b1fa2" if wallet == "held" else "#2e7d32" if wallet == "released" else "#555"
                 
@@ -695,7 +691,7 @@ async def admin_dashboard(request: Request):
                 .stats-container {{ display: flex; gap: 20px; margin-bottom: 30px; }}
                 .stat-card {{ background: white; padding: 25px; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); flex: 1; text-align: center; border-top: 5px solid #2E7D32; }}
                 .stat-card h3 {{ margin: 0; color: #666; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; }}
-                .stat-card p {{ margin: 12px 0 0; font-size: 32px; font-weight: bold; color: #2E7D32; }}
+                .stat-card p {{ margin: 15px 0 0; font-size: 32px; font-weight: bold; color: #2E7D32; }}
                 .logout-btn {{ float: right; background-color: #555; color: white; padding: 10px 18px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 13px; transition: 0.2s; }}
                 .logout-btn:hover {{ background-color: #333; }}
                 code {{ font-family: 'Courier New', Courier, monospace; font-weight: bold; color: #c7254e; background-color: #f9f2f4; padding: 2px 4px; border-radius: 4px; }}
@@ -931,7 +927,7 @@ Subtotal: Le {str(s_total)}
 Delivery Fee: Le {str(d_fee)}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-💰 PAYMENT DETAILS
+📦 PAYMENT DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Total Amount Paid: Le {str(total_amt)}
 
@@ -1372,17 +1368,17 @@ async def receive_message(request: Request):
                                 token = os.getenv("MONIME_SECRET_KEY")
                                 space_id = os.getenv("MONIME_SPACE_ID")
                                 
-                                # Simplified, robust payload to avoid Schema 400 errors
+                                # Monime payload structure using core fields matching their standard interface guidelines
                                 monime_payload = {
                                     "name": f"Agro Market Order #{order_id}",
-                                    "reference": f"AGM-ORD-{order_id}",
+                                    "reference": str(order_id),
                                     "amount": int(total_amt) * 100, # Minor units
                                     "currency": "SLE",
                                     "successUrl": "https://agro-market-bot.onrender.com/admin", 
                                     "cancelUrl": "https://agro-market-bot.onrender.com/admin"
                                 }
                                 
-                                # Send BOTH headers to ensure no auth lockouts
+                                # Send BOTH headers to ensure zero credential context processing locks
                                 monime_headers = {
                                     "Authorization": f"Bearer {token}",
                                     "Monime-Space-Id": str(space_id).strip(),
@@ -1391,7 +1387,7 @@ async def receive_message(request: Request):
                                     "Accept": "application/json"
                                 }
                                 
-                                # Use the main API URL (Sandbox is handled via the mon_test_ key)
+                                # Main checkout engine endpoint pipeline call
                                 response = requests.post(
                                     "https://api.monime.io/v1/checkout-sessions", 
                                     headers=monime_headers, 
@@ -1406,19 +1402,18 @@ async def receive_message(request: Request):
                                     if live_url:
                                         send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\n🔗 *Monime Live Payment Link:*\n{live_url}")
                                     else:
-                                        send_whatsapp_message(sender_phone, f"⚠️ API Success, but no URL found in response: {res_data}")
+                                        send_whatsapp_message(sender_phone, f"⚠️ API Success, but no URL found in response data map body: {res_data}")
                                 else:
-                                    # THIS IS THE CRITICAL FIX: SEND THE ERROR TO WHATSAPP!
+                                    # EXPOSE THE ERROR TO WHATSAPP INDEPENDENTLY
                                     send_whatsapp_message(sender_phone, f"❌ *Monime API Rejected the Payload!*\nStatus Code: {response.status_code}\nError Details: {response.text}")
                                     
-                                    # Fallback
                                     simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
-                                    send_whatsapp_message(b_phone, f"🎉 *Order Confirmed!* (Simulated Link):\n🔗 {simulated_paylink}")
+                                    send_whatsapp_message(b_phone, f"🎉 *Order Confirmed!* (Fallback Simulator Link Active):\n🔗 {simulated_paylink}")
                                     
                             except Exception as api_err:
-                                send_whatsapp_message(sender_phone, f"❌ *Connection Exception:* {str(api_err)}")
+                                send_whatsapp_message(sender_phone, f"❌ *Connection Exception details caught:* {str(api_err)}")
                                 simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
-                                send_whatsapp_message(b_phone, f"🔗 Simulated Link:\n{simulated_paylink}")
+                                send_whatsapp_message(b_phone, f"🔗 Fallback Simulator Link:\n{simulated_paylink}")
                             
                             if pref == "delivery":
                                 update_session(sender_phone, "logistics_setup", "choose_option")
@@ -1507,7 +1502,7 @@ async def receive_message(request: Request):
                                 o_id, p_name, _, _, f_phone, b_name, _, b_phone, *rest = details
                                 msg = f"🚚 *Job #{o_id} In Progress*\n\n📦 Item: {p_name}\n🎯 Dropoff: {b_name}\n📞 Seller: wa.me/{f_phone}\n📞 Buyer: wa.me/{b_phone}\n\n1️⃣ Mark Package Delivered ✅\n2️⃣ Cancel Route ❌\n\n_Reply 1 or 2_"
                                 update_session_data(sender_phone, {"target_job": order_id})
-                                update_session(sender_phone, "driver_flow", "awaiting_confirm_complete")
+                                update_session(sender_phone, "driver_flow", "awaiting_complete")
                                 send_whatsapp_message(sender_phone, msg)
                         else:
                             send_whatsapp_message(sender_phone, "Invalid number.")
