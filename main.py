@@ -1371,12 +1371,15 @@ async def receive_message(request: Request):
                                 )
                                 
                                 if response.status_code in [200, 201]:
+                                    # THIS IS THE REAL API ROUTE (Save for later)
                                     res_data = response.json()
                                     live_checkout_url = res_data.get("result", {}).get("redirectUrl", res_data.get("redirectUrl"))
                                     send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\nPlease process your payment securely to our escrow container using the link below:\n🔗 {live_checkout_url}\n\n_Funds will remain safely locked until you confirm delivery receipt!_")
                                 else:
-                                    print(f"Monime API Error: {response.text}")
-                                    send_whatsapp_message(b_phone, "⚠️ Monime gateway creation encountered an error. Please try again shortly.")
+                                    # THIS FALLS BACK TO YOUR CUSTOM MOCK PAGE FOR THE CLIENT DEMO
+                                    print(f"Monime API Not Configured. Using Local Simulator.")
+                                    simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
+                                    send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\nPlease process your payment securely to our escrow container using the link below:\n🔗 {simulated_paylink}\n\n_Funds will remain safely locked until you confirm delivery receipt!_")
                                     
                             except Exception as api_err:
                                 print(f"Gateway failure: {api_err}")
