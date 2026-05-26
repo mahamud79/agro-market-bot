@@ -502,7 +502,6 @@ def is_admin_authorized(request: Request):
         return True
     except: return False
 
-
 @app.get("/checkout/pay/{order_id}", response_class=HTMLResponse)
 async def checkout_payment_page(order_id: int):
     order_data = get_order_by_id(order_id)
@@ -1322,7 +1321,7 @@ async def receive_message(request: Request):
                             # CLIENT FIX 1: Ask for specific delivery location during checkout!
                             update_session_data(sender_phone, {"temp_delivery_pref": "delivery"})
                             update_session(sender_phone, "buyer_checkout", "awaiting_delivery_address")
-                            send_whatsapp_message(sender_phone, "📍 Please type your full delivery address or area (this will be sent to the driver/seller):")
+                            send_whatsapp_message(sender_phone, "📍 Please type your full delivery address or area (this will be sent to the driver and seller):")
                             return {"status": "ok"}
                         elif text == "2": 
                             pref = "pickup"
@@ -1405,23 +1404,13 @@ async def receive_message(request: Request):
                                 # FIX 1: Generate the exact required idempotency key format to prevent 400 Errors
                                 unique_idempotency_token = f"key_{order_id}_{secrets.token_hex(8)}"
                                 
-                                # FIXED SCHEMA: Removed 'orderId' as it is forbidden by Monime's strict schema
+                                # FIXED SCHEMA: Removed 'lineItems' to ensure strictly basic schema mapping
                                 monime_payload = {
-                                    "name": f"Agro Market Order #{order_id}",
+                                    "amount": int(total_amt) * 100, 
+                                    "currency": "SLE",
                                     "reference": str(order_id),
                                     "successUrl": "https://agro-market-bot.onrender.com/admin", 
-                                    "cancelUrl": "https://agro-market-bot.onrender.com/admin",
-                                    "lineItems": [
-                                        {
-                                            "type": "custom",
-                                            "name": str(p_name).upper(),
-                                            "price": {
-                                                "currency": "SLE",
-                                                "value": int(total_amt) * 100 
-                                            },
-                                            "quantity": 1
-                                        }
-                                    ]
+                                    "cancelUrl": "https://agro-market-bot.onrender.com/admin"
                                 }
                                 
                                 # FIX 2: Passed the Idempotency Key explicitly in the HTTP header variables array
@@ -1451,21 +1440,23 @@ async def receive_message(request: Request):
                                     if live_url:
                                         send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\n🔗 *Monime Live Payment Link:*\n{live_url}")
                                     else:
-                                        send_whatsapp_message(sender_phone, f"⚠️ API Success, but no URL found in response: {res_data}")
+                                        send_whatsapp_message(sender_phone, f"⚠️ API Success, but no URL found in response data map body: {res_data}")
                                 else:
+                                    # EXPOSE THE ERROR TO WHATSAPP INDEPENDENTLY
                                     send_whatsapp_message(sender_phone, f"❌ *Monime API Rejected the Payload!*\nStatus Code: {response.status_code}\nError Details: {response.text}")
+                                    
                                     simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
-                                    send_whatsapp_message(b_phone, f"🎉 *Order Confirmed!* (Simulated Link):\n🔗 {simulated_paylink}")
+                                    send_whatsapp_message(b_phone, f"🎉 *Order Confirmed!* (Fallback Simulator Link Active):\n🔗 {simulated_paylink}")
                                     
                             except Exception as api_err:
-                                send_whatsapp_message(sender_phone, f"❌ *Connection Exception:* {str(api_err)}")
+                                send_whatsapp_message(sender_phone, f"❌ *Connection Exception details caught:* {str(api_err)}")
                                 simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
-                                send_whatsapp_message(b_phone, f"🔗 Simulated Link:\n{simulated_paylink}")
+                                send_whatsapp_message(b_phone, f"🔗 Fallback Simulator Link:\n{simulated_paylink}")
                             
                             # CLIENT FIX 2: Reworded the Delivery Dispatch message to meet client expectations!
                             if pref == "delivery":
                                 update_session(sender_phone, "logistics_setup", "choose_option")
-                                send_whatsapp_message(sender_phone, "🚚 *Logistics & Delivery Selection*:\n\nHow would you like to handle delivery for this order?\n1️⃣ Use Local Delivery (Van, Bike, Truck Rates) 🏢\n2️⃣ Self-Delivery (Handle delivery personally) 🚶")
+                                send_whatsapp_message(sender_phone, "🚚 *Logistics & Delivery Selection*:\n\nHow would you like to handle local delivery for this order?\n1️⃣ Use Local Delivery (Van, Bike, Truck) 🏢\n2️⃣ Self-Delivery (Handle delivery personally) 🚶")
                                 return {"status": "ok"}
                         elif text == "2":
                             update_order_status(order_id, "DECLINED")
