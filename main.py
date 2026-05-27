@@ -216,7 +216,6 @@ def create_order(buyer_phone, product_id, preference, payment_method, order_qty=
         delivery_fee = 1500 if preference == 'delivery' else 0
         total_amount = subtotal + delivery_fee
         
-        # Save custom buyer information dynamically to database profiles
         if custom_name:
             cursor.execute("UPDATE users SET name = %s WHERE phone = %s", (custom_name, buyer_phone))
         if custom_address:
@@ -484,9 +483,6 @@ def get_dashboard_stats():
 # SECURE ADMIN WEB DASHBOARD ROUTES
 # ========================================================
 
-def hash_password(password: str):
-    return hashlib.sha256(password.encode('utf-8')).hexdigest()
-
 def is_admin_authorized(request: Request):
     session_cookie = request.cookies.get("secure_admin_session")
     if not session_cookie: return False
@@ -643,11 +639,11 @@ async def admin_dashboard(request: Request):
             wallet_color = "#7b1fa2" if wallet == "held" else "#2e7d32" if wallet == "released" else "#555"
             active_ledger_rows += f"<tr><td><b>#{o_id}</b></td><td>+{b_num}</td><td>{str(p_item).upper()}</td><td>Le {t_val}</td><td><span style=\"background:{status_color};color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;\">{state.upper()}</span></td><td><span style=\"background:{wallet_color};color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;\">{str(wallet).upper()}</span></td><td><code>{rcpt_display}</code></td></tr>"
         
-        # 2. Verified Farmers (Client Request 5)
+        # 2. Verified Farmers
         cursor.execute("SELECT name, phone, location FROM users WHERE role = 'role_farmer' LIMIT 10;")
         farmers_html = "".join([f"<tr><td>{row[0]}</td><td>+{row[1]}</td><td>{row[2]}</td><td><span style='color:#2e7d32;font-weight:bold;'>Approved ✅</span></td></tr>" for row in cursor.fetchall()])
         
-        # 3. Logistics Fleet (Client Request 5)
+        # 3. Logistics Fleet
         cursor.execute("SELECT name, phone, vehicle_number FROM users WHERE role = 'role_driver' LIMIT 10;")
         drivers_html = "".join([f"<tr><td>{row[0]}</td><td>+{row[1]}</td><td>{row[2]}</td><td><span style='color:#0288d1;font-weight:bold;'>Active 🚚</span></td></tr>" for row in cursor.fetchall()])
         cursor.close()
@@ -671,11 +667,6 @@ async def admin_dashboard(request: Request):
                 th {{ background-color: #2E7D32; color: white; font-weight: 600; text-transform: uppercase; font-size: 12px; letter-spacing: 0.5px; }}
                 tr:hover {{ background-color: #f9fbf9; }}
                 .btn {{ color: white; border: none; padding: 8px 15px; text-align: center; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; }}
-                .btn-reject {{ background-color: #f44336; }}
-                .btn-add {{ background-color: #008CBA; padding: 10px 20px; }}
-                .add-form {{ background: white; padding: 25px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-radius: 6px; }}
-                input[type=text] {{ padding: 10px; margin: 5px 10px 5px 0; border: 1px solid #ccc; border-radius: 4px; width: 25%; font-size: 14px; }}
-                .stats-container {{ display: flex; gap: 20px; margin-bottom: 30px; }}
                 .stat-card {{ background: white; padding: 25px; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); flex: 1; text-align: center; border-top: 5px solid #2E7D32; }}
                 .stat-card p {{ margin: 15px 0 0; font-size: 32px; font-weight: bold; color: #2E7D32; }}
                 .logout-btn {{ float: right; background-color: #555; color: white; padding: 10px 18px; border-radius: 4px; font-weight: bold; font-size: 13px; text-decoration: none; }}
@@ -686,7 +677,7 @@ async def admin_dashboard(request: Request):
                 <a href="/admin/logout" class="logout-btn">🔒 Logout</a>
                 <h1>🛡️ Agro Market Admin Dashboard</h1>
                 
-                <div class="stats-container">
+                <div class="stats-container font-style: normal;" style="display:flex; gap:20px; margin-bottom:30px;">
                     <div class="stat-card"><h3>👥 Total Users</h3><p>{stats['total_users']}</p></div>
                     <div class="stat-card"><h3>🛒 Active Orders</h3><p>{stats['active_orders']}</p></div>
                     <div class="stat-card"><h3>✅ Total Deliveries</h3><p>{stats['total_deliveries']}</p></div>
@@ -868,7 +859,7 @@ async def monime_payment_webhook(request: Request):
                 b_phone, f_phone, p_name, total_amt = res
                 success_msg = f"💳 *Payment Escrow Confirmed!* Le {total_amt} for your order of *{p_name}* has been successfully secured via Monime. Funds are locked safely until delivery verification."
                 send_whatsapp_message(b_phone, success_msg)
-                send_whatsapp_message(f_phone, f"💰 *Payment Received in Escrow!* The buyer has funded Order #{order_id} ({p_name}). Please process shipping configurations immediately.")
+                send_whatsapp_message(f_phone, f"💰 *Payment Received in Escrow!* The buyer has funded Order #{order_id} ({p_name}). Please process transport logs immediately.")
         except Exception as e: pass
     return {"status": "processed"}
 
@@ -1200,7 +1191,6 @@ async def receive_message(request: Request):
                         pref = session_data.get("temp_delivery_pref", "delivery")
                         order_qty = session_data.get("temp_buy_qty", 1)
                         
-                        # Parsing delivery info strings explicitly
                         user_input_parts = text.split(",", 1)
                         custom_buyer_name = user_input_parts[0].strip() if len(user_input_parts) > 1 else "Agro Registered Buyer"
                         delivery_address = user_input_parts[1].strip() if len(user_input_parts) > 1 else text.strip()
@@ -1250,7 +1240,7 @@ async def receive_message(request: Request):
                                 space_id = os.getenv("MONIME_SPACE_ID")
                                 unique_idempotency_token = f"key_{order_id}_{secrets.token_hex(8)}"
                                 
-                                # FIX 3: Reconstructed the strict relational payload map definition array
+                                # Monime strict payload format structure 
                                 monime_payload = {
                                     "name": f"Agro Market Order #{order_id}",
                                     "reference": str(order_id),
@@ -1276,25 +1266,27 @@ async def receive_message(request: Request):
                                     "Accept": "application/json"
                                 }
                                 
-                                # FIX 4: Dynamically adjust gateway baseline path mapping if a sandbox testing token variable is bound
-                                api_url = "https://api.monime.io/v1/checkout-sessions"
-                                if token and str(token).startswith("mon_test_"):
-                                    api_url = "https://api.sandbox.monime.io/v1/checkout-sessions"
+                                # FIXED HEADERS: Pointing directly to Monime space keys
+                                if space_id:
+                                    monime_headers["Monime-Space-Id"] = str(space_id).strip()
                                     monime_headers["X-Space-Id"] = str(space_id).strip()
-                                else:
-                                    if space_id:
-                                        monime_headers["Monime-Space-Id"] = str(space_id).strip()
                                 
-                                response = requests.post(api_url, headers=monime_headers, json=monime_payload, timeout=15)
+                                # FIXED ENDPOINT: Connecting straight over Monime core domain parameters
+                                response = requests.post(
+                                    "https://api.monime.io/v1/checkout-sessions", 
+                                    headers=monime_headers, 
+                                    json=monime_payload, 
+                                    timeout=15
+                                )
                                 
                                 if response.status_code in [200, 201]:
                                     res_data = response.json()
                                     live_url = res_data.get("result", {}).get("redirectUrl") or res_data.get("redirectUrl") or res_data.get("result", {}).get("url") or res_data.get("url")
                                     
                                     if live_url:
-                                        send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\n🔗 *Monime Live Payment Link:*\n{live_url}")
+                                        send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\n🔗 *Monime Payment Link:*\n{live_url}")
                                     else:
-                                        send_whatsapp_message(sender_phone, f"⚠️ API Success, but URL string parameter missing: {res_data}")
+                                        send_whatsapp_message(sender_phone, f"⚠️ API Success, but URL token string missing: {res_data}")
                                 else:
                                     send_whatsapp_message(sender_phone, f"❌ *Monime API Rejected the Payload!*\nStatus Code: {response.status_code}\nError Details: {response.text}")
                                     simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
@@ -1305,7 +1297,6 @@ async def receive_message(request: Request):
                                 simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
                                 send_whatsapp_message(b_phone, f"🔗 Fallback Link:\n{simulated_paylink}")
                             
-                            # Update system orders log rows status to process local delivery assignment steps safely
                             if pref == "delivery":
                                 try:
                                     conn = psycopg2.connect(DATABASE_URL)
@@ -1367,7 +1358,7 @@ async def receive_message(request: Request):
                                 o_id, p_name, _, _, f_phone, b_name, _, b_phone, *rest = details
                                 msg = f"🚚 *Job #{o_id} In Progress*\n\n📦 Item: {p_name}\n🎯 Dropoff: {b_name}\n📞 Seller: wa.me/{f_phone}\n📞 Buyer: wa.me/{b_phone}\n\n1️⃣ Mark Package Delivered ✅\n2️⃣ Cancel Route ❌\n\n_Reply 1 or 2_"
                                 update_session_data(sender_phone, {"target_job": order_id})
-                                update_session(sender_phone, "driver_flow", "awaiting_confirm_complete")
+                                update_session(sender_phone, "driver_flow", "awaiting_complete")
                                 send_whatsapp_message(sender_phone, msg)
                         else:
                             send_whatsapp_message(sender_phone, "Invalid number.")
