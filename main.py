@@ -533,7 +533,7 @@ async def checkout_payment_page(order_id: int):
                     <b>📦 Product Description:</b> {p_name.upper()}<br>
                     <b>🔢 Order Reference Key:</b> AGM-ORD-{order_id}<br>
                     <b>📱 Payer Account MSISDN:</b> +{buyer_phone}<br>
-                    <span class="provider-badge">🛡️ Immuta Ledger Escrow Container Enabled</span>
+                    <span class="provider-badge">🛡️ Escrow Container Enabled</span>
                 </div>
                 <div class="price-tag">SLE {display_amt}.00</div>
                 <form action="/admin/api/simulate-webhook-trigger/{order_id}" method="post">
@@ -626,7 +626,6 @@ async def admin_dashboard(request: Request):
     market_prices = get_market_prices(include_id=True)
     stats = get_dashboard_stats()
     
-    # 1. Orders Ledger
     active_ledger_rows = ""
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -639,11 +638,9 @@ async def admin_dashboard(request: Request):
             wallet_color = "#7b1fa2" if wallet == "held" else "#2e7d32" if wallet == "released" else "#555"
             active_ledger_rows += f"<tr><td><b>#{o_id}</b></td><td>+{b_num}</td><td>{str(p_item).upper()}</td><td>Le {t_val}</td><td><span style=\"background:{status_color};color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;\">{state.upper()}</span></td><td><span style=\"background:{wallet_color};color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;\">{str(wallet).upper()}</span></td><td><code>{rcpt_display}</code></td></tr>"
         
-        # 2. Verified Farmers
         cursor.execute("SELECT name, phone, location FROM users WHERE role = 'role_farmer' LIMIT 10;")
         farmers_html = "".join([f"<tr><td>{row[0]}</td><td>+{row[1]}</td><td>{row[2]}</td><td><span style='color:#2e7d32;font-weight:bold;'>Approved ✅</span></td></tr>" for row in cursor.fetchall()])
         
-        # 3. Logistics Fleet
         cursor.execute("SELECT name, phone, vehicle_number FROM users WHERE role = 'role_driver' LIMIT 10;")
         drivers_html = "".join([f"<tr><td>{row[0]}</td><td>+{row[1]}</td><td>{row[2]}</td><td><span style='color:#0288d1;font-weight:bold;'>Active 🚚</span></td></tr>" for row in cursor.fetchall()])
         cursor.close()
@@ -677,7 +674,7 @@ async def admin_dashboard(request: Request):
                 <a href="/admin/logout" class="logout-btn">🔒 Logout</a>
                 <h1>🛡️ Agro Market Admin Dashboard</h1>
                 
-                <div class="stats-container font-style: normal;" style="display:flex; gap:20px; margin-bottom:30px;">
+                <div class="stats-container" style="display:flex; gap:20px; margin-bottom:30px;">
                     <div class="stat-card"><h3>👥 Total Users</h3><p>{stats['total_users']}</p></div>
                     <div class="stat-card"><h3>🛒 Active Orders</h3><p>{stats['active_orders']}</p></div>
                     <div class="stat-card"><h3>✅ Total Deliveries</h3><p>{stats['total_deliveries']}</p></div>
@@ -792,7 +789,7 @@ Subtotal: Le {str(s_total)}
 Delivery Fee: Le {str(d_fee)}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-💰 PAYMENT DETAILS
+📦 PAYMENT DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Total Amount Paid: Le {str(total_amt)}
 
@@ -1233,7 +1230,7 @@ async def receive_message(request: Request):
                         
                         if text == "1":
                             update_order_status(order_id, "AWAITING_PAYMENT")
-                            send_whatsapp_message(sender_phone, f"✅ Order #{order_id} confirmed. Communicating secure payload metrics over Monime...")
+                            send_whatsapp_message(sender_phone, f"✅ Order #{order_id} confirmed. Requesting live payment link from Monime Rails...")
                             
                             try:
                                 token = os.getenv("MONIME_SECRET_KEY")
@@ -1265,13 +1262,11 @@ async def receive_message(request: Request):
                                     "Accept": "application/json"
                                 }
                                 
-                                # CRITICAL FIX: AUTOMATED GATEWAY BASELINE ENV ROUTER MAPPING FALLBACKS
+                                # DYNAMIC ROUTER: Swapping target domains cleanly based on prefix rules
                                 if token and str(token).startswith("mon_test_"):
-                                    # SANDBOX WORKSPACE DEFINITION
                                     api_url = "https://api.sandbox.monime.io/v1/checkout-sessions"
                                     monime_headers["X-Space-Id"] = str(space_id).strip()
                                 else:
-                                    # LIVE WORKSITE CONFIGURATION PRODUCTION DEFINITION
                                     api_url = "https://api.monime.io/v1/checkout-sessions"
                                     if space_id:
                                         monime_headers["Monime-Space-Id"] = str(space_id).strip()
