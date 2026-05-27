@@ -1233,14 +1233,13 @@ async def receive_message(request: Request):
                         
                         if text == "1":
                             update_order_status(order_id, "AWAITING_PAYMENT")
-                            send_whatsapp_message(sender_phone, f"✅ Order #{order_id} confirmed. Requesting live payment link from Monime Rails...")
+                            send_whatsapp_message(sender_phone, f"✅ Order #{order_id} confirmed. Communicating secure payload metrics over Monime...")
                             
                             try:
                                 token = os.getenv("MONIME_SECRET_KEY")
                                 space_id = os.getenv("MONIME_SPACE_ID")
                                 unique_idempotency_token = f"key_{order_id}_{secrets.token_hex(8)}"
                                 
-                                # Monime strict payload format structure 
                                 monime_payload = {
                                     "name": f"Agro Market Order #{order_id}",
                                     "reference": str(order_id),
@@ -1266,14 +1265,19 @@ async def receive_message(request: Request):
                                     "Accept": "application/json"
                                 }
                                 
-                                # FIXED HEADERS: Pointing directly to Monime space keys
-                                if space_id:
-                                    monime_headers["Monime-Space-Id"] = str(space_id).strip()
+                                # CRITICAL FIX: AUTOMATED GATEWAY BASELINE ENV ROUTER MAPPING FALLBACKS
+                                if token and str(token).startswith("mon_test_"):
+                                    # SANDBOX WORKSPACE DEFINITION
+                                    api_url = "https://api.sandbox.monime.io/v1/checkout-sessions"
                                     monime_headers["X-Space-Id"] = str(space_id).strip()
+                                else:
+                                    # LIVE WORKSITE CONFIGURATION PRODUCTION DEFINITION
+                                    api_url = "https://api.monime.io/v1/checkout-sessions"
+                                    if space_id:
+                                        monime_headers["Monime-Space-Id"] = str(space_id).strip()
                                 
-                                # FIXED ENDPOINT: Connecting straight over Monime core domain parameters
                                 response = requests.post(
-                                    "https://api.monime.io/v1/checkout-sessions", 
+                                    api_url, 
                                     headers=monime_headers, 
                                     json=monime_payload, 
                                     timeout=15
@@ -1284,13 +1288,13 @@ async def receive_message(request: Request):
                                     live_url = res_data.get("result", {}).get("redirectUrl") or res_data.get("redirectUrl") or res_data.get("result", {}).get("url") or res_data.get("url")
                                     
                                     if live_url:
-                                        send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\n🔗 *Monime Payment Link:*\n{live_url}")
+                                        send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\nPlease process your payment securely using the link below:\n🔗 {live_url}")
                                     else:
-                                        send_whatsapp_message(sender_phone, f"⚠️ API Success, but URL token string missing: {res_data}")
+                                        send_whatsapp_message(sender_phone, f"⚠️ API Success, but checkout landing token field missing: {res_data}")
                                 else:
                                     send_whatsapp_message(sender_phone, f"❌ *Monime API Rejected the Payload!*\nStatus Code: {response.status_code}\nError Details: {response.text}")
                                     simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
-                                    send_whatsapp_message(b_phone, f"🎉 *Order Confirmed!* (Fallback Link):\n🔗 {simulated_paylink}")
+                                    send_whatsapp_message(b_phone, f"🎉 *Order Confirmed!* (Fallback Link Active):\n🔗 {simulated_paylink}")
                                     
                             except Exception as api_err:
                                 send_whatsapp_message(sender_phone, f"❌ *Connection Exception details caught:* {str(api_err)}")
