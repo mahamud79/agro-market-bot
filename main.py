@@ -53,6 +53,13 @@ LANGUAGES = {
         "buyer_menu": "🛒 *Buyer Dashboard*\nWhat would you like to do today?\n\n1️⃣ Buy Produce\n2️⃣ Buy Farm Inputs\n3️⃣ My Orders\n4️⃣ Market Prices\n\n_Reply with a number_",
         "input_menu": "🌱 *Input Seller Dashboard*\nWhat would you like to do today?\n\n1️⃣ Add Supply\n2️⃣ My Inventory\n3️⃣ View Orders\n4️⃣ Market Prices\n\n_Reply with a number_",
         "driver_menu": "🚚 *Driver Dashboard*\nWhat would you like to do today?\n\n1️⃣ Find Deliveries\n2️⃣ My Deliveries\n\n_Reply with a number_"
+    },
+    "krio": {
+        "welcome": "Wɛlkɔm to Agro Makit 🌱\n\nFɔ stat, tɛl wi aw yu want fɔ yuz dis platfɔm tide:\n\n1️⃣ Sɛl Produce (Fama)\n2️⃣ Bay Produce & Inputs (Baya)\n3️⃣ Sɛl Farm Inputs\n4️⃣ Drayva / Rayda\n\n_Reply with the number (e.g., 1)_",
+        "farmer_menu": "🌾 *Fama Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Add Produce\n2️⃣ My Inventory\n3️⃣ View Orders\n4️⃣ Buy Supplies\n5️⃣ Market Prices\n\n_Reply with a number_",
+        "buyer_menu": "🛒 *Baya Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Buy Produce\n2️⃣ Buy Farm Inputs\n3️⃣ My Orders\n4️⃣ Market Prices\n\n_Reply with a number_",
+        "input_menu": "🌱 *Input Seller Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Add Supply\n2️⃣ My Inventory\n3️⃣ View Orders\n4️⃣ Market Prices\n\n_Reply with a number_",
+        "driver_menu": "🚚 *Driver Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Find Deliveries\n2️⃣ My Deliveries\n\n_Reply with a number_"
     }
 }
 
@@ -75,12 +82,16 @@ def send_whatsapp_image(phone_number, image_id, caption_text):
     except Exception as e:
         print(f"WhatsApp API Error: {e}")
 
+def send_language_menu(phone_number):
+    msg = "🌍 Welcome to Agro Market! / Wɛlkɔm to Agro Makit!\n\nPlease select your preferred language:\n\n1️⃣ English\n2️⃣ Krio\n\n_Reply with 1 or 2_"
+    send_whatsapp_message(phone_number, msg)
+
 def send_role_menu(phone_number, lang="english"):
-    t = LANGUAGES.get("english")
+    t = LANGUAGES.get(lang, LANGUAGES["english"])
     send_whatsapp_message(phone_number, t["welcome"])
 
 def send_main_menu(phone_number, role, lang="english"):
-    t = LANGUAGES.get("english")
+    t = LANGUAGES.get(lang, LANGUAGES["english"])
     menus = {"role_farmer": t["farmer_menu"], "role_buyer": t["buyer_menu"], "role_driver": t["driver_menu"], "role_input": t["input_menu"]}
     send_whatsapp_message(phone_number, menus.get(role, "Menu unavailable."))
 
@@ -533,7 +544,7 @@ async def checkout_payment_page(order_id: int):
                     <b>📦 Product Description:</b> {p_name.upper()}<br>
                     <b>🔢 Order Reference Key:</b> AGM-ORD-{order_id}<br>
                     <b>📱 Payer Account MSISDN:</b> +{buyer_phone}<br>
-                    <span class="provider-badge">🛡️ Escrow Container Enabled</span>
+                    <span class="provider-badge">🛡️ Immuta Ledger Escrow Container Enabled</span>
                 </div>
                 <div class="price-tag">SLE {display_amt}.00</div>
                 <form action="/admin/api/simulate-webhook-trigger/{order_id}" method="post">
@@ -789,7 +800,7 @@ Subtotal: Le {str(s_total)}
 Delivery Fee: Le {str(d_fee)}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📦 PAYMENT DETAILS
+💰 PAYMENT DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Total Amount Paid: Le {str(total_amt)}
 
@@ -1262,14 +1273,9 @@ async def receive_message(request: Request):
                                     "Accept": "application/json"
                                 }
                                 
-                                # DYNAMIC ROUTER: Swapping target domains cleanly based on prefix rules
-                                if token and str(token).startswith("mon_test_"):
-                                    api_url = "https://api.sandbox.monime.io/v1/checkout-sessions"
-                                    monime_headers["X-Space-Id"] = str(space_id).strip()
-                                else:
-                                    api_url = "https://api.monime.io/v1/checkout-sessions"
-                                    if space_id:
-                                        monime_headers["Monime-Space-Id"] = str(space_id).strip()
+                                api_url = "https://api.monime.io/v1/checkout-sessions"
+                                if space_id:
+                                    monime_headers["Monime-Space-Id"] = str(space_id).strip()
                                 
                                 response = requests.post(
                                     api_url, 
@@ -1283,18 +1289,18 @@ async def receive_message(request: Request):
                                     live_url = res_data.get("result", {}).get("redirectUrl") or res_data.get("redirectUrl") or res_data.get("result", {}).get("url") or res_data.get("url")
                                     
                                     if live_url:
-                                        send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\nPlease process your payment securely using the link below:\n🔗 {live_url}")
+                                        send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability for your order of *{p_name}*.\n\n🔗 *Monime Live Payment Link:*\n{live_url}")
                                     else:
-                                        send_whatsapp_message(sender_phone, f"⚠️ API Success, but checkout landing token field missing: {res_data}")
+                                        send_whatsapp_message(sender_phone, f"⚠️ API Success, but URL token string missing: {res_data}")
                                 else:
                                     send_whatsapp_message(sender_phone, f"❌ *Monime API Rejected the Payload!*\nStatus Code: {response.status_code}\nError Details: {response.text}")
                                     simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
-                                    send_whatsapp_message(b_phone, f"🎉 *Order Confirmed!* (Fallback Link Active):\n🔗 {simulated_paylink}")
+                                    send_whatsapp_message(b_phone, f"🎉 *Order Confirmed!* (Fallback Simulator Link):\n🔗 {simulated_paylink}")
                                     
                             except Exception as api_err:
                                 send_whatsapp_message(sender_phone, f"❌ *Connection Exception details caught:* {str(api_err)}")
                                 simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
-                                send_whatsapp_message(b_phone, f"🔗 Fallback Link:\n{simulated_paylink}")
+                                send_whatsapp_message(b_phone, f"🔗 Fallback Simulator Link:\n{simulated_paylink}")
                             
                             if pref == "delivery":
                                 try:
