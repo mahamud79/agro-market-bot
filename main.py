@@ -91,10 +91,6 @@ def send_whatsapp_image(phone_number, image_id, caption_text):
     except Exception as e:
         print(f"WhatsApp API Error: {e}")
 
-def send_language_menu(phone_number):
-    msg = "🌍 Welcome to Agro Market! / Wɛlkɔm to Agro Makit!\n\nPlease select your preferred language:\n\n1️⃣ English\n2️⃣ Krio\n\n_Reply with 1 or 2_"
-    send_whatsapp_message(phone_number, msg)
-
 def send_role_menu(phone_number, lang="english"):
     t = LANGUAGES.get("english")
     send_whatsapp_message(phone_number, t["welcome"])
@@ -174,7 +170,7 @@ def save_new_product(phone_number, image_id, category='produce'):
         price = temp_data.get("produce_price", "Unknown")
         quantity = temp_data.get("produce_quantity", "Unknown")
         cursor.execute("INSERT INTO products (farmer_phone, product_name, price, quantity, image_id, category) VALUES (%s, %s, %s, %s, %s, %s)", (phone_number, name, price, quantity, image_id, category))
-        cursor.execute("UPDATE user_sessions SET temp_data = NULL WHERE phone = %s", (phonenumber,))
+        cursor.execute("UPDATE user_sessions SET temp_data = NULL WHERE phone = %s", (phone_number,))
         conn.commit()
         cursor.close()
         conn.close()
@@ -653,7 +649,7 @@ async def process_login(request: Request):
 
 @app.post("/admin/user/toggle/{phone}")
 async def toggle_user_approval(phone: str, request: Request):
-    if not is_admin_authorized(request): return RedirectResponse(url="/admin/login")
+    if not is_admin_authorized(request): return RedirectResponse(url="/admin/login", status_code=303)
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
@@ -675,7 +671,20 @@ async def toggle_user_approval(phone: str, request: Request):
         conn.close()
     except Exception as e:
         print(f"Approval toggle logic exception: {e}")
-    return HTMLResponse("<script>window.location.href='/admin';</script>")
+    return RedirectResponse(url="/admin", status_code=303)
+
+@app.post("/admin/price/add")
+async def admin_add_price(request: Request):
+    if not is_admin_authorized(request): return RedirectResponse(url="/admin/login", status_code=303)
+    form_data = await request.form()
+    add_market_price(form_data.get("crop_name"), form_data.get("location"), form_data.get("price"))
+    return RedirectResponse(url="/admin", status_code=303)
+
+@app.post("/admin/price/delete/{price_id}")
+async def admin_delete_price(price_id: int, request: Request):
+    if not is_admin_authorized(request): return RedirectResponse(url="/admin/login", status_code=303)
+    delete_market_price(price_id)
+    return RedirectResponse(url="/admin", status_code=303)
 
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_dashboard(request: Request):
@@ -699,21 +708,27 @@ async def admin_dashboard(request: Request):
         cursor.execute("SELECT name, phone, location, is_approved FROM users WHERE role IN ('role_farmer', 'role_input') ORDER BY created_at DESC LIMIT 100;")
         farmers_html = ""
         for row in cursor.fetchall():
+            name = str(row[0]) if row[0] else "Unknown"
+            phone = str(row[1]) if row[1] else "Unknown"
+            location = str(row[2]) if row[2] else "Unknown"
             status_badge = "<span style='color:#2e7d32;font-weight:bold;'>Approved ✅</span>" if row[3] else "<span style='color:#f57c00;font-weight:bold;'>Pending ⏳</span>"
             action_btn = "Revoke" if row[3] else "Approve"
             btn_class = "btn-revoke" if row[3] else "btn-approve"
-            form = f'<form action="/admin/user/toggle/{row[1]}" method="post" style="margin:0;"><button type="submit" class="btn {btn_class}">{action_btn}</button></form>'
-            farmers_html += f"<tr><td>{row[0]}</td><td>+{row[1]}</td><td>{row[2]}</td><td>{status_badge}</td><td>{form}</td></tr>"
+            form = f'<form action="/admin/user/toggle/{phone}" method="post" style="margin:0;"><button type="submit" class="btn {btn_class}">{action_btn}</button></form>'
+            farmers_html += f"<tr><td>{name}</td><td>+{phone}</td><td>{location}</td><td>{status_badge}</td><td>{form}</td></tr>"
         
         # LOGISTICS DELIVERY FLEET WITH APPROVAL STATE ACTIONS
         cursor.execute("SELECT name, phone, vehicle_number, is_approved FROM users WHERE role = 'role_driver' ORDER BY created_at DESC LIMIT 100;")
         drivers_html = ""
         for row in cursor.fetchall():
+            name = str(row[0]) if row[0] else "Unknown"
+            phone = str(row[1]) if row[1] else "Unknown"
+            vehicle = str(row[2]) if row[2] else "N/A"
             status_badge = "<span style='color:#0288d1;font-weight:bold;'>Active 🚚</span>" if row[3] else "<span style='color:#f57c00;font-weight:bold;'>Pending ⏳</span>"
             action_btn = "Revoke" if row[3] else "Approve"
             btn_class = "btn-revoke" if row[3] else "btn-approve"
-            form = f'<form action="/admin/user/toggle/{row[1]}" method="post" style="margin:0;"><button type="submit" class="btn {btn_class}">{action_btn}</button></form>'
-            drivers_html += f"<tr><td>{row[0]}</td><td>+{row[1]}</td><td>{row[2]}</td><td>{status_badge}</td><td>{form}</td></tr>"
+            form = f'<form action="/admin/user/toggle/{phone}" method="post" style="margin:0;"><button type="submit" class="btn {btn_class}">{action_btn}</button></form>'
+            drivers_html += f"<tr><td>{name}</td><td>+{phone}</td><td>{vehicle}</td><td>{status_badge}</td><td>{form}</td></tr>"
         
         cursor.close()
         conn.close()
@@ -737,11 +752,16 @@ async def admin_dashboard(request: Request):
                 tr:hover {{ background-color: #f9fbf9; }}
                 
                 /* MODERN INTERACTIVE BUTTON STYLES */
-                .btn {{ border: none; padding: 8px 15px; text-align: center; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; transition: all 0.3s ease; box-shadow: 0 2px 4px rgba(0,0,0,0.1); color: white; }}
+                .btn {{ border: none; padding: 8px 15px; text-align: center; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; transition: all 0.3s ease; box-shadow: 0 2px 4px rgba(0,0,0,0.1); color: white; display: inline-block; }}
                 .btn-approve {{ background-color: #2ea44f; }}
                 .btn-approve:hover {{ background-color: #22863a; transform: translateY(-1px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }}
                 .btn-revoke {{ background-color: #d73a49; }}
                 .btn-revoke:hover {{ background-color: #cb2431; transform: translateY(-1px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }}
+                .btn-add {{ background-color: #008CBA; padding: 10px 20px; }}
+                .btn-reject {{ background-color: #f44336; }}
+                
+                .add-form {{ background: white; padding: 25px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-radius: 6px; }}
+                input[type=text] {{ padding: 10px; margin: 5px 10px 5px 0; border: 1px solid #ccc; border-radius: 4px; width: 25%; font-size: 14px; }}
                 
                 .stat-card {{ background: white; padding: 25px; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); flex: 1; text-align: center; border-top: 5px solid #2E7D32; }}
                 .stat-card p {{ margin: 15px 0 0; font-size: 32px; font-weight: bold; color: #2E7D32; }}
@@ -791,6 +811,43 @@ async def admin_dashboard(request: Request):
                     <thead><tr><th>ID</th><th>Buyer Number</th><th>Product</th><th>Amount</th><th>Order Status</th><th>Escrow State</th><th>Receipt Code</th></tr></thead>
                     <tbody>{active_ledger_rows}</tbody>
                 </table>
+                
+                <h2>📈 Daily Commodity Pricing Management Dashboard</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Crop / Item Name</th><th>Market Location</th><th>Current Reference Price</th><th>Action Panel</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+    """
+    if not market_prices:
+        html_content += "<tr><td colspan='4' class='empty'>No market price vectors currently stored inside table configurations.</td></tr>"
+    else:
+        for p in market_prices:
+            p_id, crop, loc, price = p
+            html_content += f"""
+                <tr>
+                    <td><b>{crop}</b></td><td>{loc}</td><td><b>{price}</b></td>
+                    <td>
+                        <form action="/admin/price/delete/{p_id}" method="post" style="margin:0;">
+                            <button type="submit" class="btn btn-reject">Delete Price</button>
+                        </form>
+                    </td>
+                </tr>
+            """
+    html_content += """
+                    </tbody>
+                </table>
+                <div class="add-form">
+                    <h3>➕ Add New Market Price</h3>
+                    <form action="/admin/price/add" method="post" style="margin:0;">
+                        <input type="text" name="crop_name" placeholder="e.g., Cassava" required>
+                        <input type="text" name="location" placeholder="e.g., Makeni" required>
+                        <input type="text" name="price" placeholder="e.g., SLE 45.00" required>
+                        <button type="submit" class="btn btn-add">Add Price to Dashboard</button>
+                    </form>
+                </div>
             </div>
         </body>
     </html>
