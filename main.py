@@ -62,6 +62,13 @@ LANGUAGES = {
         "buyer_menu": "🛒 *Buyer Dashboard*\nWhat would you like to do today?\n\n1️⃣ Buy Produce\n2️⃣ Buy Farm Inputs\n3️⃣ My Orders\n4️⃣ Market Prices\n\n_Reply with a number_",
         "input_menu": "🌱 *Input Seller Dashboard*\nWhat would you like to do today?\n\n1️⃣ Add Supply\n2️⃣ My Inventory\n3️⃣ View Orders\n4️⃣ Market Prices\n\n_Reply with a number_",
         "driver_menu": "🚚 *Driver Dashboard*\nWhat would you like to do today?\n\n1️⃣ Find Deliveries\n2️⃣ My Deliveries\n\n_Reply with a number_"
+    },
+    "krio": {
+        "welcome": "Wɛlkɔm to Agro Makit 🌱\n\nFɔ stat, tɛl wi aw yu want fɔ yuz dis platfɔm tide:\n\n1️⃣ Sɛl Produce (Fama)\n2️⃣ Bay Produce & Inputs (Baya)\n3️⃣ Sɛl Farm Inputs\n4️⃣ Drayva / Rayda\n\n_Reply with the number (e.g., 1)_",
+        "farmer_menu": "🌾 *Fama Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Add Produce\n2️⃣ My Inventory\n3️⃣ View Orders\n4️⃣ Buy Supplies\n5️⃣ Market Prices\n\n_Reply with a number_",
+        "buyer_menu": "🛒 *Baya Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Buy Produce\n2️⃣ Buy Farm Inputs\n3️⃣ My Orders\n4️⃣ Market Prices\n\n_Reply with a number_",
+        "input_menu": "🌱 *Input Seller Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Add Supply\n2️⃣ My Inventory\n3️⃣ View Orders\n4️⃣ Market Prices\n\n_Reply with a number_",
+        "driver_menu": "🚚 *Driver Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Find Deliveries\n2️⃣ My Deliveries\n\n_Reply with a number_"
     }
 }
 
@@ -83,6 +90,10 @@ def send_whatsapp_image(phone_number, image_id, caption_text):
         requests.post(url, headers=headers, json=payload, timeout=10)
     except Exception as e:
         print(f"WhatsApp API Error: {e}")
+
+def send_language_menu(phone_number):
+    msg = "🌍 Welcome to Agro Market! / Wɛlkɔm to Agro Makit!\n\nPlease select your preferred language:\n\n1️⃣ English\n2️⃣ Krio\n\n_Reply with 1 or 2_"
+    send_whatsapp_message(phone_number, msg)
 
 def send_role_menu(phone_number, lang="english"):
     t = LANGUAGES.get("english")
@@ -163,7 +174,7 @@ def save_new_product(phone_number, image_id, category='produce'):
         price = temp_data.get("produce_price", "Unknown")
         quantity = temp_data.get("produce_quantity", "Unknown")
         cursor.execute("INSERT INTO products (farmer_phone, product_name, price, quantity, image_id, category) VALUES (%s, %s, %s, %s, %s, %s)", (phone_number, name, price, quantity, image_id, category))
-        cursor.execute("UPDATE user_sessions SET temp_data = NULL WHERE phone = %s", (phone_number,))
+        cursor.execute("UPDATE user_sessions SET temp_data = NULL WHERE phone = %s", (phonenumber,))
         conn.commit()
         cursor.close()
         conn.close()
@@ -432,7 +443,7 @@ def update_user_location_and_finish(phone_number, location):
         res = cursor.fetchone()
         role = res[0] if res else ""
         
-        # CORE FIX: Buyers auto-approved. Sellers & Logistics require manual Admin verification.
+        # Buyers auto-approved. Sellers & Logistics require manual Admin verification.
         is_approved = True if role == 'role_buyer' else False
         flow_state = 'main_menu' if is_approved else 'pending_approval'
         
@@ -553,7 +564,7 @@ async def checkout_payment_page(order_id: int):
                     <b>📦 Product Description:</b> {p_name.upper()}<br>
                     <b>🔢 Order Reference Key:</b> AGM-ORD-{order_id}<br>
                     <b>📱 Payer Account MSISDN:</b> +{buyer_phone}<br>
-                    <span class="provider-badge">🛡️ Escrow Container Enabled</span>
+                    <span class="provider-badge">🛡️ Immuta Ledger Escrow Container Enabled</span>
                 </div>
                 <div class="price-tag">SLE {display_amt}.00</div>
                 <form action="/admin/api/simulate-webhook-trigger/{order_id}" method="post">
@@ -690,7 +701,7 @@ async def admin_dashboard(request: Request):
         for row in cursor.fetchall():
             status_badge = "<span style='color:#2e7d32;font-weight:bold;'>Approved ✅</span>" if row[3] else "<span style='color:#f57c00;font-weight:bold;'>Pending ⏳</span>"
             action_btn = "Revoke" if row[3] else "Approve"
-            btn_class = "btn-reject" if row[3] else "btn-add"
+            btn_class = "btn-revoke" if row[3] else "btn-approve"
             form = f'<form action="/admin/user/toggle/{row[1]}" method="post" style="margin:0;"><button type="submit" class="btn {btn_class}">{action_btn}</button></form>'
             farmers_html += f"<tr><td>{row[0]}</td><td>+{row[1]}</td><td>{row[2]}</td><td>{status_badge}</td><td>{form}</td></tr>"
         
@@ -700,7 +711,7 @@ async def admin_dashboard(request: Request):
         for row in cursor.fetchall():
             status_badge = "<span style='color:#0288d1;font-weight:bold;'>Active 🚚</span>" if row[3] else "<span style='color:#f57c00;font-weight:bold;'>Pending ⏳</span>"
             action_btn = "Revoke" if row[3] else "Approve"
-            btn_class = "btn-reject" if row[3] else "btn-add"
+            btn_class = "btn-revoke" if row[3] else "btn-approve"
             form = f'<form action="/admin/user/toggle/{row[1]}" method="post" style="margin:0;"><button type="submit" class="btn {btn_class}">{action_btn}</button></form>'
             drivers_html += f"<tr><td>{row[0]}</td><td>+{row[1]}</td><td>{row[2]}</td><td>{status_badge}</td><td>{form}</td></tr>"
         
@@ -724,7 +735,14 @@ async def admin_dashboard(request: Request):
                 th, td {{ padding: 14px 18px; text-align: left; border-bottom: 1px solid #eef2f5; font-size: 14px; }}
                 th {{ background-color: #2E7D32; color: white; font-weight: 600; text-transform: uppercase; font-size: 12px; letter-spacing: 0.5px; }}
                 tr:hover {{ background-color: #f9fbf9; }}
-                .btn {{ color: white; border: none; padding: 8px 15px; text-align: center; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; }}
+                
+                /* MODERN INTERACTIVE BUTTON STYLES */
+                .btn {{ border: none; padding: 8px 15px; text-align: center; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; transition: all 0.3s ease; box-shadow: 0 2px 4px rgba(0,0,0,0.1); color: white; }}
+                .btn-approve {{ background-color: #2ea44f; }}
+                .btn-approve:hover {{ background-color: #22863a; transform: translateY(-1px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }}
+                .btn-revoke {{ background-color: #d73a49; }}
+                .btn-revoke:hover {{ background-color: #cb2431; transform: translateY(-1px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }}
+                
                 .stat-card {{ background: white; padding: 25px; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); flex: 1; text-align: center; border-top: 5px solid #2E7D32; }}
                 .stat-card p {{ margin: 15px 0 0; font-size: 32px; font-weight: bold; color: #2E7D32; }}
                 .logout-btn {{ float: right; background-color: #555; color: white; padding: 10px 18px; border-radius: 4px; font-weight: bold; font-size: 13px; text-decoration: none; }}
