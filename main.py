@@ -28,8 +28,17 @@ async def startup_event():
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         cursor.execute("SELECT version();")
+        
+        # Auto-Migration: Inject the approval system dynamically into the existing Supabase table
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_approved BOOLEAN DEFAULT FALSE;")
+            conn.commit()
+        except Exception as mig_err:
+            conn.rollback()
+            print(f"Migration note: {mig_err}")
+            
         print("\n" + "="*50)
-        print("✅ Successfully connected to Supabase!")
+        print("✅ Successfully connected to Supabase & Tables Verified!")
         print("="*50 + "\n")
         cursor.close()
         conn.close()
@@ -53,13 +62,6 @@ LANGUAGES = {
         "buyer_menu": "🛒 *Buyer Dashboard*\nWhat would you like to do today?\n\n1️⃣ Buy Produce\n2️⃣ Buy Farm Inputs\n3️⃣ My Orders\n4️⃣ Market Prices\n\n_Reply with a number_",
         "input_menu": "🌱 *Input Seller Dashboard*\nWhat would you like to do today?\n\n1️⃣ Add Supply\n2️⃣ My Inventory\n3️⃣ View Orders\n4️⃣ Market Prices\n\n_Reply with a number_",
         "driver_menu": "🚚 *Driver Dashboard*\nWhat would you like to do today?\n\n1️⃣ Find Deliveries\n2️⃣ My Deliveries\n\n_Reply with a number_"
-    },
-    "krio": {
-        "welcome": "Wɛlkɔm to Agro Makit 🌱\n\nFɔ stat, tɛl wi aw yu want fɔ yuz dis platfɔm tide:\n\n1️⃣ Sɛl Produce (Fama)\n2️⃣ Bay Produce & Inputs (Baya)\n3️⃣ Sɛl Farm Inputs\n4️⃣ Drayva / Rayda\n\n_Reply with the number (e.g., 1)_",
-        "farmer_menu": "🌾 *Fama Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Add Produce\n2️⃣ My Inventory\n3️⃣ View Orders\n4️⃣ Buy Supplies\n5️⃣ Market Prices\n\n_Reply with a number_",
-        "buyer_menu": "🛒 *Baya Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Buy Produce\n2️⃣ Buy Farm Inputs\n3️⃣ My Orders\n4️⃣ Market Prices\n\n_Reply with a number_",
-        "input_menu": "🌱 *Input Seller Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Add Supply\n2️⃣ My Inventory\n3️⃣ View Orders\n4️⃣ Market Prices\n\n_Reply with a number_",
-        "driver_menu": "🚚 *Driver Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Find Deliveries\n2️⃣ My Deliveries\n\n_Reply with a number_"
     }
 }
 
@@ -82,16 +84,12 @@ def send_whatsapp_image(phone_number, image_id, caption_text):
     except Exception as e:
         print(f"WhatsApp API Error: {e}")
 
-def send_language_menu(phone_number):
-    msg = "🌍 Welcome to Agro Market! / Wɛlkɔm to Agro Makit!\n\nPlease select your preferred language:\n\n1️⃣ English\n2️⃣ Krio\n\n_Reply with 1 or 2_"
-    send_whatsapp_message(phone_number, msg)
-
 def send_role_menu(phone_number, lang="english"):
-    t = LANGUAGES.get(lang, LANGUAGES["english"])
+    t = LANGUAGES.get("english")
     send_whatsapp_message(phone_number, t["welcome"])
 
 def send_main_menu(phone_number, role, lang="english"):
-    t = LANGUAGES.get(lang, LANGUAGES["english"])
+    t = LANGUAGES.get("english")
     menus = {"role_farmer": t["farmer_menu"], "role_buyer": t["buyer_menu"], "role_driver": t["driver_menu"], "role_input": t["input_menu"]}
     send_whatsapp_message(phone_number, menus.get(role, "Menu unavailable."))
 
@@ -100,11 +98,11 @@ def get_user_profile(phone_number):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        cursor.execute("SELECT u.role, u.nin_status, u.language, us.current_flow, us.current_step, u.name, u.vehicle_number FROM users u LEFT JOIN user_sessions us ON u.phone = us.phone WHERE u.phone = %s", (phone_number,))
+        cursor.execute("SELECT u.role, u.nin_status, u.language, us.current_flow, us.current_step, u.name, u.vehicle_number, u.is_approved FROM users u LEFT JOIN user_sessions us ON u.phone = us.phone WHERE u.phone = %s", (phone_number,))
         result = cursor.fetchone()
         cursor.close()
         conn.close()
-        if result: return {"role": result[0], "nin_status": result[1], "language": result[2] or "english", "flow": result[3], "step": result[4], "name": result[5], "vehicle_number": result[6]}
+        if result: return {"role": result[0], "nin_status": result[1], "language": result[2] or "english", "flow": result[3], "step": result[4], "name": result[5], "vehicle_number": result[6], "is_approved": result[7]}
         return None
     except: return None
 
@@ -430,12 +428,20 @@ def update_user_location_and_finish(phone_number, location):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        cursor.execute("UPDATE users SET location = %s WHERE phone = %s", (location, phone_number))
-        cursor.execute("UPDATE user_sessions SET current_flow = 'main_menu', current_step = 'idle' WHERE phone = %s", (phone_number,))
+        cursor.execute("SELECT role FROM users WHERE phone = %s", (phone_number,))
+        res = cursor.fetchone()
+        role = res[0] if res else ""
+        
+        # CORE FIX: Buyers auto-approved. Sellers & Logistics require manual Admin verification.
+        is_approved = True if role == 'role_buyer' else False
+        flow_state = 'main_menu' if is_approved else 'pending_approval'
+        
+        cursor.execute("UPDATE users SET location = %s, is_approved = %s WHERE phone = %s", (location, is_approved, phone_number))
+        cursor.execute("UPDATE user_sessions SET current_flow = %s, current_step = 'idle' WHERE phone = %s", (flow_state, phone_number))
         conn.commit()
         cursor.close()
         conn.close()
-        return True
+        return is_approved
     except: return False
 
 def get_market_prices(include_id=False):
@@ -494,6 +500,9 @@ def get_dashboard_stats():
 # SECURE ADMIN WEB DASHBOARD ROUTES
 # ========================================================
 
+def hash_password(password: str):
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
 def is_admin_authorized(request: Request):
     session_cookie = request.cookies.get("secure_admin_session")
     if not session_cookie: return False
@@ -544,7 +553,7 @@ async def checkout_payment_page(order_id: int):
                     <b>📦 Product Description:</b> {p_name.upper()}<br>
                     <b>🔢 Order Reference Key:</b> AGM-ORD-{order_id}<br>
                     <b>📱 Payer Account MSISDN:</b> +{buyer_phone}<br>
-                    <span class="provider-badge">🛡️ Immuta Ledger Escrow Container Enabled</span>
+                    <span class="provider-badge">🛡️ Escrow Container Enabled</span>
                 </div>
                 <div class="price-tag">SLE {display_amt}.00</div>
                 <form action="/admin/api/simulate-webhook-trigger/{order_id}" method="post">
@@ -631,6 +640,32 @@ async def process_login(request: Request):
         print(f"Error: {e}")
     return HTMLResponse("<script>alert('Invalid Password.'); window.location.href='/admin/login';</script>")
 
+@app.post("/admin/user/toggle/{phone}")
+async def toggle_user_approval(phone: str, request: Request):
+    if not is_admin_authorized(request): return RedirectResponse(url="/admin/login")
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("SELECT is_approved, role FROM users WHERE phone = %s", (phone,))
+        res = cursor.fetchone()
+        if res:
+            new_status = not res[0]
+            cursor.execute("UPDATE users SET is_approved = %s WHERE phone = %s", (new_status, phone))
+            
+            if new_status:
+                cursor.execute("UPDATE user_sessions SET current_flow = 'main_menu', current_step = 'idle' WHERE phone = %s", (phone,))
+                send_whatsapp_message(phone, "🎉 *Congratulations!* Your Agro Market profile has been approved by the Administrator.\n\nType *'menu'* to access your active dashboard.")
+            else:
+                cursor.execute("UPDATE user_sessions SET current_flow = 'pending_approval', current_step = 'idle' WHERE phone = %s", (phone,))
+                send_whatsapp_message(phone, "⚠️ Your Agro Market account access has been revoked by the Administrator.")
+            
+            conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"Approval toggle logic exception: {e}")
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
+
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_dashboard(request: Request):
     if not is_admin_authorized(request): return RedirectResponse(url="/admin/login")
@@ -641,7 +676,7 @@ async def admin_dashboard(request: Request):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        cursor.execute("SELECT id, buyer_phone, product_name, total_amount, status, wallet_status, receipt_number, created_at FROM orders ORDER BY created_at DESC LIMIT 15;")
+        cursor.execute("SELECT id, buyer_phone, product_name, total_amount, status, wallet_status, receipt_number, created_at FROM orders ORDER BY created_at DESC LIMIT 100;")
         for row in cursor.fetchall():
             o_id, b_num, p_item, t_val, state, wallet, rcpt_code, timestamp = row
             rcpt_display = rcpt_code if rcpt_code else "<span style='color:#777;font-style:italic;'>Unreleased</span>"
@@ -649,17 +684,32 @@ async def admin_dashboard(request: Request):
             wallet_color = "#7b1fa2" if wallet == "held" else "#2e7d32" if wallet == "released" else "#555"
             active_ledger_rows += f"<tr><td><b>#{o_id}</b></td><td>+{b_num}</td><td>{str(p_item).upper()}</td><td>Le {t_val}</td><td><span style=\"background:{status_color};color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;\">{state.upper()}</span></td><td><span style=\"background:{wallet_color};color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;\">{str(wallet).upper()}</span></td><td><code>{rcpt_display}</code></td></tr>"
         
-        cursor.execute("SELECT name, phone, location FROM users WHERE role = 'role_farmer' LIMIT 10;")
-        farmers_html = "".join([f"<tr><td>{row[0]}</td><td>+{row[1]}</td><td>{row[2]}</td><td><span style='color:#2e7d32;font-weight:bold;'>Approved ✅</span></td></tr>" for row in cursor.fetchall()])
+        # VERIFIED SELLER DIRECTORY WITH APPROVAL STATE ACTIONS
+        cursor.execute("SELECT name, phone, location, is_approved FROM users WHERE role IN ('role_farmer', 'role_input') ORDER BY created_at DESC LIMIT 100;")
+        farmers_html = ""
+        for row in cursor.fetchall():
+            status_badge = "<span style='color:#2e7d32;font-weight:bold;'>Approved ✅</span>" if row[3] else "<span style='color:#f57c00;font-weight:bold;'>Pending ⏳</span>"
+            action_btn = "Revoke" if row[3] else "Approve"
+            btn_class = "btn-reject" if row[3] else "btn-add"
+            form = f'<form action="/admin/user/toggle/{row[1]}" method="post" style="margin:0;"><button type="submit" class="btn {btn_class}">{action_btn}</button></form>'
+            farmers_html += f"<tr><td>{row[0]}</td><td>+{row[1]}</td><td>{row[2]}</td><td>{status_badge}</td><td>{form}</td></tr>"
         
-        cursor.execute("SELECT name, phone, vehicle_number FROM users WHERE role = 'role_driver' LIMIT 10;")
-        drivers_html = "".join([f"<tr><td>{row[0]}</td><td>+{row[1]}</td><td>{row[2]}</td><td><span style='color:#0288d1;font-weight:bold;'>Active 🚚</span></td></tr>" for row in cursor.fetchall()])
+        # LOGISTICS DELIVERY FLEET WITH APPROVAL STATE ACTIONS
+        cursor.execute("SELECT name, phone, vehicle_number, is_approved FROM users WHERE role = 'role_driver' ORDER BY created_at DESC LIMIT 100;")
+        drivers_html = ""
+        for row in cursor.fetchall():
+            status_badge = "<span style='color:#0288d1;font-weight:bold;'>Active 🚚</span>" if row[3] else "<span style='color:#f57c00;font-weight:bold;'>Pending ⏳</span>"
+            action_btn = "Revoke" if row[3] else "Approve"
+            btn_class = "btn-reject" if row[3] else "btn-add"
+            form = f'<form action="/admin/user/toggle/{row[1]}" method="post" style="margin:0;"><button type="submit" class="btn {btn_class}">{action_btn}</button></form>'
+            drivers_html += f"<tr><td>{row[0]}</td><td>+{row[1]}</td><td>{row[2]}</td><td>{status_badge}</td><td>{form}</td></tr>"
+        
         cursor.close()
         conn.close()
     except Exception as err:
         active_ledger_rows = f"<tr><td colspan='7' style='color:red;'>Failed to pull DB logs: {err}</td></tr>"
-        farmers_html = "<tr><td colspan='4'>No farmers found.</td></tr>"
-        drivers_html = "<tr><td colspan='4'>No drivers found.</td></tr>"
+        farmers_html = "<tr><td colspan='5'>No farmers found.</td></tr>"
+        drivers_html = "<tr><td colspan='5'>No drivers found.</td></tr>"
 
     html_content = f"""
     <html>
@@ -669,7 +719,7 @@ async def admin_dashboard(request: Request):
                 body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; padding: 40px; margin:0; }}
                 .container {{ max-width: 1200px; margin: 0 auto; }}
                 h1 {{ color: #2E7D32; margin-top: 0; }}
-                h2 {{ color: #333; margin-top: 40px; border-bottom: 2px solid #2E7D32; padding-bottom: 10px; text-transform: uppercase; font-size: 18px; letter-spacing: 0.5px; }}
+                h2 {{ color: #333; margin-top: 40px; border-bottom: 2px solid #2E7D32; padding-bottom: 10px; text-transform: uppercase; font-size: 18px; letter-spacing: 0.5px; display: flex; justify-content: space-between; align-items: flex-end; }}
                 table {{ width: 100%; border-collapse: collapse; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-radius: 6px; overflow: hidden; margin-bottom: 30px; }}
                 th, td {{ padding: 14px 18px; text-align: left; border-bottom: 1px solid #eef2f5; font-size: 14px; }}
                 th {{ background-color: #2E7D32; color: white; font-weight: 600; text-transform: uppercase; font-size: 12px; letter-spacing: 0.5px; }}
@@ -678,7 +728,25 @@ async def admin_dashboard(request: Request):
                 .stat-card {{ background: white; padding: 25px; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); flex: 1; text-align: center; border-top: 5px solid #2E7D32; }}
                 .stat-card p {{ margin: 15px 0 0; font-size: 32px; font-weight: bold; color: #2E7D32; }}
                 .logout-btn {{ float: right; background-color: #555; color: white; padding: 10px 18px; border-radius: 4px; font-weight: bold; font-size: 13px; text-decoration: none; }}
+                .search-bar {{ width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 6px; font-size: 15px; box-sizing: border-box; }}
             </style>
+            <script>
+                // Instant Frontend Filtering Engine for Backend Arrays
+                function searchTable(inputId, tableId) {{
+                    let input = document.getElementById(inputId);
+                    let filter = input.value.toLowerCase();
+                    let table = document.getElementById(tableId);
+                    let tr = table.getElementsByTagName("tr");
+                    for (let i = 1; i < tr.length; i++) {{ // Skip header row
+                        let rowText = tr[i].innerText.toLowerCase();
+                        if (rowText.includes(filter)) {{
+                            tr[i].style.display = "";
+                        }} else {{
+                            tr[i].style.display = "none";
+                        }}
+                    }}
+                }}
+            </script>
         </head>
         <body>
             <div class="container">
@@ -692,13 +760,16 @@ async def admin_dashboard(request: Request):
                 </div>
 
                 <h2>🧑‍🌾 Verified Seller Directory</h2>
-                <table><thead><tr><th>Name</th><th>Phone Number</th><th>Farm Location</th><th>Status</th></tr></thead><tbody>{farmers_html}</tbody></table>
+                <input type="text" id="searchSellers" class="search-bar" placeholder="🔍 Search Sellers by Name, Phone, or Location..." onkeyup="searchTable('searchSellers', 'sellersTable')">
+                <table id="sellersTable"><thead><tr><th>Name</th><th>Phone Number</th><th>Farm Location</th><th>Status</th><th>Action</th></tr></thead><tbody>{farmers_html}</tbody></table>
                 
                 <h2>🚚 Logistics Delivery Fleet</h2>
-                <table><thead><tr><th>Rider Name</th><th>Phone Number</th><th>Vehicle Plate</th><th>Status</th></tr></thead><tbody>{drivers_html}</tbody></table>
+                <input type="text" id="searchDrivers" class="search-bar" placeholder="🔍 Search Riders by Name, Phone, or Plate..." onkeyup="searchTable('searchDrivers', 'driversTable')">
+                <table id="driversTable"><thead><tr><th>Rider Name</th><th>Phone Number</th><th>Vehicle Plate</th><th>Status</th><th>Action</th></tr></thead><tbody>{drivers_html}</tbody></table>
 
                 <h2>📊 Real-Time Escrow Transaction Registry Ledger</h2>
-                <table>
+                <input type="text" id="searchOrders" class="search-bar" placeholder="🔍 Search Orders by ID, Receipt, Product, or Phone..." onkeyup="searchTable('searchOrders', 'ordersTable')">
+                <table id="ordersTable">
                     <thead><tr><th>ID</th><th>Buyer Number</th><th>Product</th><th>Amount</th><th>Order Status</th><th>Escrow State</th><th>Receipt Code</th></tr></thead>
                     <tbody>{active_ledger_rows}</tbody>
                 </table>
@@ -901,10 +972,14 @@ async def receive_message(request: Request):
                     lat = message_data["location"]["latitude"]
                     long = message_data["location"]["longitude"]
                     address = message_data["location"].get("name", f"Location: {lat}, {long}")
-                    if update_user_location_and_finish(sender_phone, address):
+                    
+                    is_approved = update_user_location_and_finish(sender_phone, address)
+                    if is_approved:
                         send_whatsapp_message(sender_phone, f"📍 Location Saved: {address}\n\n✅ Registration Complete! 🎉")
                         fresh_profile = get_user_profile(sender_phone)
                         send_main_menu(sender_phone, fresh_profile["role"], fresh_profile["language"])
+                    else:
+                        send_whatsapp_message(sender_phone, "✅ Registration Complete!\n\n⏳ Your profile has been successfully submitted and is *pending admin approval*. You will be notified as soon as you are verified to use the platform.")
                 return {"status": "ok"}
             
             elif msg_type == "image":
@@ -921,8 +996,11 @@ async def receive_message(request: Request):
                 
                 if text in ["hi", "hello", "menu"]:
                     if profile and profile.get("role"):
-                        update_session(sender_phone, "main_menu", "idle")
-                        send_main_menu(sender_phone, profile["role"], profile.get("language", "english"))
+                        if not profile.get("is_approved"):
+                            send_whatsapp_message(sender_phone, "⏳ Your account is currently under review by our Admin team. We will notify you once approved to access the dashboard!")
+                        else:
+                            update_session(sender_phone, "main_menu", "idle")
+                            send_main_menu(sender_phone, profile["role"], profile.get("language", "english"))
                     else:
                         if not profile:
                             create_user_with_language(sender_phone, "english")
@@ -936,6 +1014,10 @@ async def receive_message(request: Request):
 
                 flow = profile.get("flow")
                 step = profile.get("step")
+                
+                if flow == "pending_approval":
+                    send_whatsapp_message(sender_phone, "⏳ Your profile is still pending admin approval. Please wait for the confirmation message to access platform features.")
+                    return {"status": "ok"}
 
                 if flow == "onboarding":
                     if step == "awaiting_language":
@@ -973,10 +1055,13 @@ async def receive_message(request: Request):
                         update_user_nin_and_step(sender_phone, text)
                         send_whatsapp_message(sender_phone, "⏳ Verifying your identity...\n\n✅ Identity verified successfully.\n\nNow share your location 📍 OR type your district.")
                     elif step == "awaiting_location":
-                        update_user_location_and_finish(sender_phone, text)
+                        is_approved = update_user_location_and_finish(sender_phone, text)
                         fresh_profile = get_user_profile(sender_phone)
-                        send_whatsapp_message(sender_phone, "✅ Registration Complete! 🎉")
-                        send_main_menu(sender_phone, fresh_profile["role"], fresh_profile["language"])
+                        if is_approved:
+                            send_whatsapp_message(sender_phone, "✅ Registration Complete! 🎉")
+                            send_main_menu(sender_phone, fresh_profile["role"], fresh_profile["language"])
+                        else:
+                            send_whatsapp_message(sender_phone, "✅ Registration Complete!\n\n⏳ Your profile has been submitted and is *pending admin approval*. We will message you as soon as you are verified to use the platform.")
 
                 elif flow in ["add_produce", "add_input"]:
                     if step == "awaiting_produce_name":
@@ -1015,7 +1100,7 @@ async def receive_message(request: Request):
                                 for idx, o in enumerate(orders, 1):
                                     msg += f"{idx}️⃣ Request #{o[0]} - {o[1]} for {o[2]}\n"
                                     temp_map[str(idx)] = o[0]
-                                msg += "\n_Reply with a number to accept/reject request_"
+                                msg += "\n_Reply with a number to manage an order_"
                                 update_session_data(sender_phone, {"manage_map": temp_map})
                                 update_session(sender_phone, "manage_order", "awaiting_selection")
                                 send_whatsapp_message(sender_phone, msg)
@@ -1274,8 +1359,12 @@ async def receive_message(request: Request):
                                 }
                                 
                                 api_url = "https://api.monime.io/v1/checkout-sessions"
-                                if space_id:
-                                    monime_headers["Monime-Space-Id"] = str(space_id).strip()
+                                if token and str(token).startswith("mon_test_"):
+                                    api_url = "https://api.sandbox.monime.io/v1/checkout-sessions"
+                                    monime_headers["X-Space-Id"] = str(space_id).strip()
+                                else:
+                                    if space_id:
+                                        monime_headers["Monime-Space-Id"] = str(space_id).strip()
                                 
                                 response = requests.post(
                                     api_url, 
