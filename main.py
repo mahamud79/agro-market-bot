@@ -1384,7 +1384,7 @@ async def receive_message(request: Request):
                             order_details = get_order_by_id(order_id)
                             if order_details:
                                 _, p_name, b_phone, b_name, status, pref, pay_method, *rest = order_details
-                                msg = f"📦 *Manage Request #{order_id}*\n\nBuyer: {b_name}\nItem: {p_name}\nPreference: {pref}\n\n1️⃣ Confirm Order Request ✅\n2️⃣ Reject Order ❌\n\n_Reply 1 or 2_"
+                                msg = f"📦 *Manage Request #{order_id}*\n\nItem: {p_name}\nBuyer: {b_name}\nPreference: {pref}\n\n1️⃣ Confirm Availability ✅\n2️⃣ Reject Request ❌\n\n_Reply 1 or 2_"
                                 update_session_data(sender_phone, {"target_order": order_id})
                                 update_session(sender_phone, "manage_order", "awaiting_action")
                                 send_whatsapp_message(sender_phone, msg)
