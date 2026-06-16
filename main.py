@@ -410,18 +410,6 @@ def update_user_vehicle(phone_number, vehicle_number):
         return True
     except: return False
 
-def update_user_nin_and_step(phone_number, nin):
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        cursor.execute("UPDATE users SET nin_number = %s, nin_status = 'verified' WHERE phone = %s", (nin, phone_number))
-        cursor.execute("UPDATE user_sessions SET current_step = 'awaiting_location' WHERE phone = %s", (phone_number,))
-        conn.commit()
-        cursor.close()
-        conn.close()
-        return True
-    except: return False
-
 def update_user_location_and_finish(phone_number, location):
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -686,6 +674,8 @@ async def admin_dashboard(request: Request):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
+        
+        # Pull orders
         cursor.execute("SELECT id, buyer_phone, product_name, total_amount, status, wallet_status, receipt_number, created_at FROM orders ORDER BY created_at DESC LIMIT 1000;")
         for row in cursor.fetchall():
             o_id, b_num, p_item, t_val, state, wallet, rcpt_code, timestamp = row
@@ -694,7 +684,7 @@ async def admin_dashboard(request: Request):
             wallet_color = "#7b1fa2" if wallet == "held" else "#2e7d32" if wallet == "released" else "#555"
             active_ledger_rows += f"<tr><td><b>#{o_id}</b></td><td>+{b_num}</td><td>{str(p_item).upper()}</td><td>Le {t_val}</td><td><span style=\"background:{status_color};color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;\">{state.upper()}</span></td><td><span style=\"background:{wallet_color};color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;\">{str(wallet).upper()}</span></td><td><code>{rcpt_display}</code></td></tr>"
         
-        # CLIENT FIX 2: Dynamic JS Paged Sorting -> Approved float top, unapproved sink bottom, ordered by oldest registration
+        # VERIFIED SELLER DIRECTORY (Farmers and Input Sellers ONLY)
         cursor.execute("SELECT name, phone, location, is_approved FROM users WHERE role IN ('role_farmer', 'role_input') ORDER BY is_approved DESC, created_at ASC LIMIT 1000;")
         farmers_html = ""
         for row in cursor.fetchall():
@@ -706,7 +696,8 @@ async def admin_dashboard(request: Request):
             btn_class = "btn-revoke" if row[3] else "btn-approve"
             form = f'<form action="/admin/user/toggle/{phone}" method="post" style="margin:0;"><button type="submit" class="btn {btn_class}">{action_btn}</button></form>'
             farmers_html += f"<tr><td>{name}</td><td>+{phone}</td><td>{location}</td><td>{status_badge}</td><td>{form}</td></tr>"
-        
+            
+        # LOGISTICS DELIVERY FLEET
         cursor.execute("SELECT name, phone, vehicle_number, is_approved FROM users WHERE role = 'role_driver' ORDER BY is_approved DESC, created_at ASC LIMIT 1000;")
         drivers_html = ""
         for row in cursor.fetchall():
@@ -718,13 +709,23 @@ async def admin_dashboard(request: Request):
             btn_class = "btn-revoke" if row[3] else "btn-approve"
             form = f'<form action="/admin/user/toggle/{phone}" method="post" style="margin:0;"><button type="submit" class="btn {btn_class}">{action_btn}</button></form>'
             drivers_html += f"<tr><td>{name}</td><td>+{phone}</td><td>{vehicle}</td><td>{status_badge}</td><td>{form}</td></tr>"
-        
+
+        # REGISTERED BUYERS DIRECTORY (Auto-Approved)
+        cursor.execute("SELECT name, phone, location FROM users WHERE role = 'role_buyer' ORDER BY created_at DESC LIMIT 1000;")
+        buyers_html = ""
+        for row in cursor.fetchall():
+            name = str(row[0]) if row[0] else "Unknown"
+            phone = str(row[1]) if row[1] else "Unknown"
+            location = str(row[2]) if row[2] else "Unknown"
+            buyers_html += f"<tr><td>{name}</td><td>+{phone}</td><td>{location}</td><td><span style='color:#2e7d32;font-weight:bold;'>Auto-Approved 🛒</span></td><td>N/A</td></tr>"
+
         cursor.close()
         conn.close()
     except Exception as err:
         active_ledger_rows = f"<tr><td colspan='7' style='color:red;'>Failed to pull DB logs: {err}</td></tr>"
         farmers_html = "<tr><td colspan='5'>No farmers found.</td></tr>"
         drivers_html = "<tr><td colspan='5'>No drivers found.</td></tr>"
+        buyers_html = "<tr><td colspan='5'>No buyers found.</td></tr>"
 
     html_content = f"""
     <html>
@@ -756,7 +757,6 @@ async def admin_dashboard(request: Request):
                 .logout-btn {{ float: right; background-color: #555; color: white; padding: 10px 18px; border-radius: 4px; font-weight: bold; font-size: 13px; text-decoration: none; }}
                 .search-bar {{ width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 6px; font-size: 15px; box-sizing: border-box; }}
                 
-                /* CLIENT UX UPDATE: Live Javascript Pagination Interface Styles */
                 .pagination {{ display: flex; justify-content: center; gap: 5px; margin-bottom: 40px; margin-top: 10px; }}
                 .page-btn {{ padding: 6px 12px; border: 1px solid #ccc; background-color: #fff; cursor: pointer; border-radius: 4px; font-weight: bold; color: #333; transition: 0.2s; }}
                 .page-btn:hover:not(:disabled) {{ background-color: #eef2f5; }}
@@ -764,11 +764,11 @@ async def admin_dashboard(request: Request):
                 .page-btn:disabled {{ color: #aaa; cursor: not-allowed; opacity: 0.6; }}
             </style>
             <script>
-                // CLIENT UX UPDATE: Lightning Fast JavaScript Dynamic Array Pagination & Filtering Matrix
                 const rowsPerPage = 10;
                 const tableState = {{
                     'sellersTable': 1,
                     'driversTable': 1,
+                    'buyersTable': 1,
                     'ordersTable': 1,
                     'pricesTable': 1
                 }};
@@ -783,7 +783,6 @@ async def admin_dashboard(request: Request):
                     let tr = tbody.getElementsByTagName("tr");
                     
                     let filteredRows = [];
-                    // Filter arrays without server reloads
                     for (let i = 0; i < tr.length; i++) {{
                         let rowText = tr[i].innerText.toLowerCase();
                         if (rowText.includes(filter)) {{
@@ -801,7 +800,6 @@ async def admin_dashboard(request: Request):
                     let start = (currentPage - 1) * rowsPerPage;
                     let end = start + rowsPerPage;
                     
-                    // Show only specific sliced page elements
                     for (let i = start; i < end && i < totalRows; i++) {{
                         filteredRows[i].style.display = "";
                     }}
@@ -840,10 +838,10 @@ async def admin_dashboard(request: Request):
                     renderTable(tableId, searchInputId, paginationId);
                 }}
 
-                // Inject pagination modules on layout load
                 window.onload = function() {{
                     renderTable('sellersTable', 'searchSellers', 'sellersPagination');
                     renderTable('driversTable', 'searchDrivers', 'driversPagination');
+                    renderTable('buyersTable', 'searchBuyers', 'buyersPagination');
                     renderTable('ordersTable', 'searchOrders', 'ordersPagination');
                     renderTable('pricesTable', 'searchPrices', 'pricesPagination');
                 }};
@@ -869,6 +867,11 @@ async def admin_dashboard(request: Request):
                 <input type="text" id="searchDrivers" class="search-bar" placeholder="🔍 Search Riders by Name, Phone, or Plate..." onkeyup="onSearch('driversTable', 'searchDrivers', 'driversPagination')">
                 <table id="driversTable"><thead><tr><th>Rider Name</th><th>Phone Number</th><th>Vehicle Plate</th><th>Status</th><th>Action</th></tr></thead><tbody>{drivers_html}</tbody></table>
                 <div id="driversPagination" class="pagination"></div>
+
+                <h2>🛒 Registered Buyers Directory</h2>
+                <input type="text" id="searchBuyers" class="search-bar" placeholder="🔍 Search Buyers by Name, Phone, or Location..." onkeyup="onSearch('buyersTable', 'searchBuyers', 'buyersPagination')">
+                <table id="buyersTable"><thead><tr><th>Name</th><th>Phone Number</th><th>Delivery Location</th><th>Status</th><th>Action</th></tr></thead><tbody>{buyers_html}</tbody></table>
+                <div id="buyersPagination" class="pagination"></div>
 
                 <h2>📊 Real-Time Escrow Transaction Registry Ledger</h2>
                 <input type="text" id="searchOrders" class="search-bar" placeholder="🔍 Search Orders by ID, Receipt, Product, or Phone..." onkeyup="onSearch('ordersTable', 'searchOrders', 'ordersPagination')">
