@@ -59,6 +59,13 @@ LANGUAGES = {
         "buyer_menu": "🛒 *Buyer Dashboard*\nWhat would you like to do today?\n\n1️⃣ Buy Produce\n2️⃣ Buy Farm Inputs\n3️⃣ My Orders\n4️⃣ Market Prices\n\n_Reply with a number_",
         "input_menu": "🌱 *Input Seller Dashboard*\nWhat would you like to do today?\n\n1️⃣ Add Supply\n2️⃣ My Inventory\n3️⃣ View Orders\n4️⃣ Market Prices\n\n_Reply with a number_",
         "driver_menu": "🚚 *Driver Dashboard*\nWhat would you like to do today?\n\n1️⃣ Find Deliveries\n2️⃣ My Deliveries\n\n_Reply with a number_"
+    },
+    "krio": {
+        "welcome": "Wɛlkɔm to Agro Makit 🌱\n\nFɔ stat, tɛl wi aw yu want fɔ yuz dis platfɔm tide:\n\n1️⃣ Sɛl Produce (Fama)\n2️⃣ Bay Produce & Inputs (Baya)\n3️⃣ Sɛl Farm Inputs\n4️⃣ Drayva / Rayda\n\n_Reply with the number (e.g., 1)_",
+        "farmer_menu": "🌾 *Fama Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Add Produce\n2️⃣ My Inventory\n3️⃣ View Orders\n4️⃣ Buy Supplies\n5️⃣ Market Prices\n\n_Reply with a number_",
+        "buyer_menu": "🛒 *Baya Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Buy Produce\n2️⃣ Buy Farm Inputs\n3️⃣ My Orders\n4️⃣ Market Prices\n\n_Reply with a number_",
+        "input_menu": "🌱 *Input Seller Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Add Supply\n2️⃣ My Inventory\n3️⃣ View Orders\n4️⃣ Market Prices\n\n_Reply with a number_",
+        "driver_menu": "🚚 *Driver Dashboard*\nWetin yu want fo du tide?\n\n1️⃣ Find Deliveries\n2️⃣ My Deliveries\n\n_Reply with a number_"
     }
 }
 
@@ -373,7 +380,8 @@ def update_user_role(phone_number, role_id):
         cursor.close()
         conn.close()
         return is_registered
-    except: return False
+    except Exception as e:
+        return False
 
 def update_user_name_and_step(phone_number, name):
     try:
@@ -382,7 +390,6 @@ def update_user_name_and_step(phone_number, name):
         cursor.execute("UPDATE users SET name = %s WHERE phone = %s", (name, phone_number))
         cursor.execute("SELECT role FROM users WHERE phone = %s", (phone_number,))
         user_role = cursor.fetchone()[0]
-        # FIX: Bypass NIN requirement immediately. Go to vehicle (if driver) or straight to location.
         next_step = 'awaiting_vehicle' if user_role == 'role_driver' else 'awaiting_location'
         cursor.execute("UPDATE user_sessions SET current_step = %s WHERE phone = %s", (next_step, phone_number))
         conn.commit()
@@ -396,7 +403,18 @@ def update_user_vehicle(phone_number, vehicle_number):
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         cursor.execute("UPDATE users SET vehicle_number = %s WHERE phone = %s", (vehicle_number, phone_number))
-        # FIX: Bypass NIN requirement immediately. Go straight to location.
+        cursor.execute("UPDATE user_sessions SET current_step = 'awaiting_location' WHERE phone = %s", (phone_number,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
+    except: return False
+
+def update_user_nin_and_step(phone_number, nin):
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET nin_number = %s, nin_status = 'verified' WHERE phone = %s", (nin, phone_number))
         cursor.execute("UPDATE user_sessions SET current_step = 'awaiting_location' WHERE phone = %s", (phone_number,))
         conn.commit()
         cursor.close()
@@ -616,7 +634,7 @@ async def process_login(request: Request):
         cursor.close()
         conn.close()
     except Exception as e:
-        print(f"Error: {e}")
+        pass
     return HTMLResponse("<script>alert('Invalid Password.'); window.location.href='/admin/login';</script>")
 
 @app.post("/admin/user/toggle/{phone}")
@@ -642,7 +660,7 @@ async def toggle_user_approval(phone: str, request: Request):
         cursor.close()
         conn.close()
     except Exception as e:
-        print(f"Approval toggle logic exception: {e}")
+        pass
     return RedirectResponse(url="/admin", status_code=303)
 
 @app.post("/admin/price/add")
@@ -668,7 +686,7 @@ async def admin_dashboard(request: Request):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        cursor.execute("SELECT id, buyer_phone, product_name, total_amount, status, wallet_status, receipt_number, created_at FROM orders ORDER BY created_at DESC LIMIT 100;")
+        cursor.execute("SELECT id, buyer_phone, product_name, total_amount, status, wallet_status, receipt_number, created_at FROM orders ORDER BY created_at DESC LIMIT 1000;")
         for row in cursor.fetchall():
             o_id, b_num, p_item, t_val, state, wallet, rcpt_code, timestamp = row
             rcpt_display = rcpt_code if rcpt_code else "<span style='color:#777;font-style:italic;'>Unreleased</span>"
@@ -676,8 +694,8 @@ async def admin_dashboard(request: Request):
             wallet_color = "#7b1fa2" if wallet == "held" else "#2e7d32" if wallet == "released" else "#555"
             active_ledger_rows += f"<tr><td><b>#{o_id}</b></td><td>+{b_num}</td><td>{str(p_item).upper()}</td><td>Le {t_val}</td><td><span style=\"background:{status_color};color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;\">{state.upper()}</span></td><td><span style=\"background:{wallet_color};color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;\">{str(wallet).upper()}</span></td><td><code>{rcpt_display}</code></td></tr>"
         
-        # VERIFIED SELLER DIRECTORY WITH APPROVAL STATE ACTIONS
-        cursor.execute("SELECT name, phone, location, is_approved FROM users WHERE role IN ('role_farmer', 'role_input') ORDER BY created_at DESC LIMIT 100;")
+        # CLIENT FIX 2: Dynamic JS Paged Sorting -> Approved float top, unapproved sink bottom, ordered by oldest registration
+        cursor.execute("SELECT name, phone, location, is_approved FROM users WHERE role IN ('role_farmer', 'role_input') ORDER BY is_approved DESC, created_at ASC LIMIT 1000;")
         farmers_html = ""
         for row in cursor.fetchall():
             name = str(row[0]) if row[0] else "Unknown"
@@ -689,8 +707,7 @@ async def admin_dashboard(request: Request):
             form = f'<form action="/admin/user/toggle/{phone}" method="post" style="margin:0;"><button type="submit" class="btn {btn_class}">{action_btn}</button></form>'
             farmers_html += f"<tr><td>{name}</td><td>+{phone}</td><td>{location}</td><td>{status_badge}</td><td>{form}</td></tr>"
         
-        # LOGISTICS DELIVERY FLEET WITH APPROVAL STATE ACTIONS
-        cursor.execute("SELECT name, phone, vehicle_number, is_approved FROM users WHERE role = 'role_driver' ORDER BY created_at DESC LIMIT 100;")
+        cursor.execute("SELECT name, phone, vehicle_number, is_approved FROM users WHERE role = 'role_driver' ORDER BY is_approved DESC, created_at ASC LIMIT 1000;")
         drivers_html = ""
         for row in cursor.fetchall():
             name = str(row[0]) if row[0] else "Unknown"
@@ -718,12 +735,11 @@ async def admin_dashboard(request: Request):
                 .container {{ max-width: 1200px; margin: 0 auto; }}
                 h1 {{ color: #2E7D32; margin-top: 0; }}
                 h2 {{ color: #333; margin-top: 40px; border-bottom: 2px solid #2E7D32; padding-bottom: 10px; text-transform: uppercase; font-size: 18px; letter-spacing: 0.5px; display: flex; justify-content: space-between; align-items: flex-end; }}
-                table {{ width: 100%; border-collapse: collapse; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-radius: 6px; overflow: hidden; margin-bottom: 30px; }}
+                table {{ width: 100%; border-collapse: collapse; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-radius: 6px; overflow: hidden; margin-bottom: 10px; }}
                 th, td {{ padding: 14px 18px; text-align: left; border-bottom: 1px solid #eef2f5; font-size: 14px; }}
                 th {{ background-color: #2E7D32; color: white; font-weight: 600; text-transform: uppercase; font-size: 12px; letter-spacing: 0.5px; }}
                 tr:hover {{ background-color: #f9fbf9; }}
                 
-                /* MODERN INTERACTIVE BUTTON STYLES */
                 .btn {{ border: none; padding: 8px 15px; text-align: center; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; transition: all 0.3s ease; box-shadow: 0 2px 4px rgba(0,0,0,0.1); color: white; display: inline-block; }}
                 .btn-approve {{ background-color: #2ea44f; }}
                 .btn-approve:hover {{ background-color: #22863a; transform: translateY(-1px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }}
@@ -739,23 +755,98 @@ async def admin_dashboard(request: Request):
                 .stat-card p {{ margin: 15px 0 0; font-size: 32px; font-weight: bold; color: #2E7D32; }}
                 .logout-btn {{ float: right; background-color: #555; color: white; padding: 10px 18px; border-radius: 4px; font-weight: bold; font-size: 13px; text-decoration: none; }}
                 .search-bar {{ width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 6px; font-size: 15px; box-sizing: border-box; }}
+                
+                /* CLIENT UX UPDATE: Live Javascript Pagination Interface Styles */
+                .pagination {{ display: flex; justify-content: center; gap: 5px; margin-bottom: 40px; margin-top: 10px; }}
+                .page-btn {{ padding: 6px 12px; border: 1px solid #ccc; background-color: #fff; cursor: pointer; border-radius: 4px; font-weight: bold; color: #333; transition: 0.2s; }}
+                .page-btn:hover:not(:disabled) {{ background-color: #eef2f5; }}
+                .page-btn.active {{ background-color: #2E7D32; color: #fff; border-color: #2E7D32; }}
+                .page-btn:disabled {{ color: #aaa; cursor: not-allowed; opacity: 0.6; }}
             </style>
             <script>
-                // Instant Frontend Filtering Engine for Backend Arrays
-                function searchTable(inputId, tableId) {{
-                    let input = document.getElementById(inputId);
-                    let filter = input.value.toLowerCase();
+                // CLIENT UX UPDATE: Lightning Fast JavaScript Dynamic Array Pagination & Filtering Matrix
+                const rowsPerPage = 10;
+                const tableState = {{
+                    'sellersTable': 1,
+                    'driversTable': 1,
+                    'ordersTable': 1,
+                    'pricesTable': 1
+                }};
+
+                function renderTable(tableId, searchInputId, paginationId) {{
+                    let input = document.getElementById(searchInputId);
+                    let filter = input ? input.value.toLowerCase() : "";
                     let table = document.getElementById(tableId);
-                    let tr = table.getElementsByTagName("tr");
-                    for (let i = 1; i < tr.length; i++) {{ // Skip header row
+                    if(!table) return;
+                    let tbody = table.getElementsByTagName("tbody")[0];
+                    if(!tbody) return;
+                    let tr = tbody.getElementsByTagName("tr");
+                    
+                    let filteredRows = [];
+                    // Filter arrays without server reloads
+                    for (let i = 0; i < tr.length; i++) {{
                         let rowText = tr[i].innerText.toLowerCase();
                         if (rowText.includes(filter)) {{
-                            tr[i].style.display = "";
-                        }} else {{
-                            tr[i].style.display = "none";
+                            filteredRows.push(tr[i]);
                         }}
+                        tr[i].style.display = "none";
                     }}
+                    
+                    let totalRows = filteredRows.length;
+                    let totalPages = Math.ceil(totalRows / rowsPerPage) || 1;
+                    
+                    if (tableState[tableId] > totalPages) tableState[tableId] = totalPages;
+                    let currentPage = tableState[tableId];
+                    
+                    let start = (currentPage - 1) * rowsPerPage;
+                    let end = start + rowsPerPage;
+                    
+                    // Show only specific sliced page elements
+                    for (let i = start; i < end && i < totalRows; i++) {{
+                        filteredRows[i].style.display = "";
+                    }}
+                    
+                    renderPagination(tableId, searchInputId, paginationId, currentPage, totalPages);
                 }}
+
+                function renderPagination(tableId, searchInputId, paginationId, currentPage, totalPages) {{
+                    let container = document.getElementById(paginationId);
+                    if (!container) return;
+                    
+                    let html = '';
+                    html += `<button class="page-btn" onclick="goToPage('${{tableId}}', '${{searchInputId}}', '${{paginationId}}', 1)" ${{currentPage === 1 ? 'disabled' : ''}}>&lt;&lt;</button>`;
+                    html += `<button class="page-btn" onclick="goToPage('${{tableId}}', '${{searchInputId}}', '${{paginationId}}', ${{currentPage - 1}})" ${{currentPage === 1 ? 'disabled' : ''}}>&lt;</button>`;
+                    
+                    let startPage = Math.max(1, currentPage - 2);
+                    let endPage = Math.min(totalPages, currentPage + 2);
+                    
+                    for (let i = startPage; i <= endPage; i++) {{
+                        html += `<button class="page-btn ${{i === currentPage ? 'active' : ''}}" onclick="goToPage('${{tableId}}', '${{searchInputId}}', '${{paginationId}}', ${{i}})">${{i}}</button>`;
+                    }}
+                    
+                    html += `<button class="page-btn" onclick="goToPage('${{tableId}}', '${{searchInputId}}', '${{paginationId}}', ${{currentPage + 1}})" ${{currentPage === totalPages ? 'disabled' : ''}}>&gt;</button>`;
+                    html += `<button class="page-btn" onclick="goToPage('${{tableId}}', '${{searchInputId}}', '${{paginationId}}', ${{totalPages}})" ${{currentPage === totalPages ? 'disabled' : ''}}>&gt;&gt;</button>`;
+                    
+                    container.innerHTML = html;
+                }}
+
+                function goToPage(tableId, searchInputId, paginationId, page) {{
+                    tableState[tableId] = page;
+                    renderTable(tableId, searchInputId, paginationId);
+                }}
+
+                function onSearch(tableId, searchInputId, paginationId) {{
+                    tableState[tableId] = 1;
+                    renderTable(tableId, searchInputId, paginationId);
+                }}
+
+                // Inject pagination modules on layout load
+                window.onload = function() {{
+                    renderTable('sellersTable', 'searchSellers', 'sellersPagination');
+                    renderTable('driversTable', 'searchDrivers', 'driversPagination');
+                    renderTable('ordersTable', 'searchOrders', 'ordersPagination');
+                    renderTable('pricesTable', 'searchPrices', 'pricesPagination');
+                }};
             </script>
         </head>
         <body>
@@ -770,22 +861,26 @@ async def admin_dashboard(request: Request):
                 </div>
 
                 <h2>🧑‍🌾 Verified Seller Directory</h2>
-                <input type="text" id="searchSellers" class="search-bar" placeholder="🔍 Search Sellers by Name, Phone, or Location..." onkeyup="searchTable('searchSellers', 'sellersTable')">
+                <input type="text" id="searchSellers" class="search-bar" placeholder="🔍 Search Sellers by Name, Phone, or Location..." onkeyup="onSearch('sellersTable', 'searchSellers', 'sellersPagination')">
                 <table id="sellersTable"><thead><tr><th>Name</th><th>Phone Number</th><th>Farm Location</th><th>Status</th><th>Action</th></tr></thead><tbody>{farmers_html}</tbody></table>
+                <div id="sellersPagination" class="pagination"></div>
                 
                 <h2>🚚 Logistics Delivery Fleet</h2>
-                <input type="text" id="searchDrivers" class="search-bar" placeholder="🔍 Search Riders by Name, Phone, or Plate..." onkeyup="searchTable('searchDrivers', 'driversTable')">
+                <input type="text" id="searchDrivers" class="search-bar" placeholder="🔍 Search Riders by Name, Phone, or Plate..." onkeyup="onSearch('driversTable', 'searchDrivers', 'driversPagination')">
                 <table id="driversTable"><thead><tr><th>Rider Name</th><th>Phone Number</th><th>Vehicle Plate</th><th>Status</th><th>Action</th></tr></thead><tbody>{drivers_html}</tbody></table>
+                <div id="driversPagination" class="pagination"></div>
 
                 <h2>📊 Real-Time Escrow Transaction Registry Ledger</h2>
-                <input type="text" id="searchOrders" class="search-bar" placeholder="🔍 Search Orders by ID, Receipt, Product, or Phone..." onkeyup="searchTable('searchOrders', 'ordersTable')">
+                <input type="text" id="searchOrders" class="search-bar" placeholder="🔍 Search Orders by ID, Receipt, Product, or Phone..." onkeyup="onSearch('ordersTable', 'searchOrders', 'ordersPagination')">
                 <table id="ordersTable">
                     <thead><tr><th>ID</th><th>Buyer Number</th><th>Product</th><th>Amount</th><th>Order Status</th><th>Escrow State</th><th>Receipt Code</th></tr></thead>
                     <tbody>{active_ledger_rows}</tbody>
                 </table>
+                <div id="ordersPagination" class="pagination"></div>
                 
                 <h2>📈 Daily Commodity Pricing Management Dashboard</h2>
-                <table>
+                <input type="text" id="searchPrices" class="search-bar" placeholder="🔍 Search Prices by Crop or Location..." onkeyup="onSearch('pricesTable', 'searchPrices', 'pricesPagination')">
+                <table id="pricesTable">
                     <thead>
                         <tr>
                             <th>Crop / Item Name</th><th>Market Location</th><th>Current Reference Price</th><th>Action Panel</th>
@@ -811,6 +906,8 @@ async def admin_dashboard(request: Request):
     html_content += """
                     </tbody>
                 </table>
+                <div id="pricesPagination" class="pagination"></div>
+                
                 <div class="add-form">
                     <h3>➕ Add New Market Price</h3>
                     <form action="/admin/price/add" method="post" style="margin:0;">
@@ -982,12 +1079,10 @@ async def monime_payment_webhook(request: Request):
             if res:
                 b_phone, f_phone, p_name, total_amt = res
                 
-                # CLIENT FIX: Generate detailed automated receipt immediately following successful payment callback
                 details = get_delivery_details(order_id)
                 if details:
                     o_id, p_name, f_name, f_loc, f_phone, b_name, b_loc, b_phone, pay_method, price, qty, rcpt, sub, d_fee, tot, d_name, d_veh, drv_phone = details
                     
-                    # Since payment just happened, a rider may not be assigned yet.
                     d_name_display = d_name if d_name else ("Pending Rider Assignment" if d_fee and d_fee > 0 else "Self Pickup / Vendor Delivery")
                     d_veh_display = d_veh if d_veh else "N/A"
                     date_now = datetime.now().strftime("%d %b %Y")
@@ -1108,7 +1203,6 @@ async def receive_message(request: Request):
                 text = message_data["text"]["body"].strip()
                 text_lower = text.lower()
                 
-                # CLIENT FIX: Frictionless global command interception
                 if text_lower.startswith("accept "):
                     order_id_str = text_lower.replace("accept ", "").strip()
                     if order_id_str.isdigit():
@@ -1263,7 +1357,6 @@ async def receive_message(request: Request):
                         if fresh_prof and fresh_prof.get("step") == "awaiting_vehicle":
                             send_whatsapp_message(sender_phone, "Responded! 1️⃣ Logistics Profile Detected!\n\nPlease type your **Vehicle License Plate Number** (e.g., AEK-458).")
                         else:
-                            # CLIENT FIX 1: By-pass the NIN input logic directly over to location coordinate capture
                             send_whatsapp_message(sender_phone, "Thanks! Now share your delivery location 📍 OR type your district/city.")
                     elif step == "awaiting_vehicle":
                         update_user_vehicle(sender_phone, text.upper())
@@ -1310,7 +1403,6 @@ async def receive_message(request: Request):
                             if not orders: send_whatsapp_message(sender_phone, "✅ No pending orders.")
                             else:
                                 msg = "📋 *Pending Requests for Review:*\n\n"
-                                # CLIENT FIX 3: Reformat direct acceptance syntax structure avoiding clunky secondary session trees
                                 for o in orders:
                                     msg_block = f"📦 *Order Request #{o[0]}*\n\nBuyer: {o[2]} (📍 {o[4]})\nProduct: {o[1]}\nPreference: {o[5]}\n\n👉 Reply *ACCEPT {o[0]}* to confirm.\n👉 Reply *REJECT {o[0]}* to decline."
                                     send_whatsapp_message(sender_phone, msg_block)
