@@ -410,6 +410,18 @@ def update_user_vehicle(phone_number, vehicle_number):
         return True
     except: return False
 
+def update_user_nin_and_step(phone_number, nin):
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET nin_number = %s, nin_status = 'verified' WHERE phone = %s", (nin, phone_number))
+        cursor.execute("UPDATE user_sessions SET current_step = 'awaiting_location' WHERE phone = %s", (phone_number,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
+    except: return False
+
 def update_user_location_and_finish(phone_number, location):
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -675,7 +687,6 @@ async def admin_dashboard(request: Request):
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         
-        # Pull orders
         cursor.execute("SELECT id, buyer_phone, product_name, total_amount, status, wallet_status, receipt_number, created_at FROM orders ORDER BY created_at DESC LIMIT 1000;")
         for row in cursor.fetchall():
             o_id, b_num, p_item, t_val, state, wallet, rcpt_code, timestamp = row
@@ -684,7 +695,6 @@ async def admin_dashboard(request: Request):
             wallet_color = "#7b1fa2" if wallet == "held" else "#2e7d32" if wallet == "released" else "#555"
             active_ledger_rows += f"<tr><td><b>#{o_id}</b></td><td>+{b_num}</td><td>{str(p_item).upper()}</td><td>Le {t_val}</td><td><span style=\"background:{status_color};color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;\">{state.upper()}</span></td><td><span style=\"background:{wallet_color};color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;\">{str(wallet).upper()}</span></td><td><code>{rcpt_display}</code></td></tr>"
         
-        # VERIFIED SELLER DIRECTORY (Farmers and Input Sellers ONLY)
         cursor.execute("SELECT name, phone, location, is_approved FROM users WHERE role IN ('role_farmer', 'role_input') ORDER BY is_approved DESC, created_at ASC LIMIT 1000;")
         farmers_html = ""
         for row in cursor.fetchall():
@@ -697,7 +707,6 @@ async def admin_dashboard(request: Request):
             form = f'<form action="/admin/user/toggle/{phone}" method="post" style="margin:0;"><button type="submit" class="btn {btn_class}">{action_btn}</button></form>'
             farmers_html += f"<tr><td>{name}</td><td>+{phone}</td><td>{location}</td><td>{status_badge}</td><td>{form}</td></tr>"
             
-        # LOGISTICS DELIVERY FLEET
         cursor.execute("SELECT name, phone, vehicle_number, is_approved FROM users WHERE role = 'role_driver' ORDER BY is_approved DESC, created_at ASC LIMIT 1000;")
         drivers_html = ""
         for row in cursor.fetchall():
@@ -710,14 +719,18 @@ async def admin_dashboard(request: Request):
             form = f'<form action="/admin/user/toggle/{phone}" method="post" style="margin:0;"><button type="submit" class="btn {btn_class}">{action_btn}</button></form>'
             drivers_html += f"<tr><td>{name}</td><td>+{phone}</td><td>{vehicle}</td><td>{status_badge}</td><td>{form}</td></tr>"
 
-        # REGISTERED BUYERS DIRECTORY (Auto-Approved)
-        cursor.execute("SELECT name, phone, location FROM users WHERE role = 'role_buyer' ORDER BY created_at DESC LIMIT 1000;")
+        # FIX: Include Buyers in Dashboard with Admin Action Controls
+        cursor.execute("SELECT name, phone, location, is_approved FROM users WHERE role = 'role_buyer' ORDER BY is_approved DESC, created_at ASC LIMIT 1000;")
         buyers_html = ""
         for row in cursor.fetchall():
             name = str(row[0]) if row[0] else "Unknown"
             phone = str(row[1]) if row[1] else "Unknown"
             location = str(row[2]) if row[2] else "Unknown"
-            buyers_html += f"<tr><td>{name}</td><td>+{phone}</td><td>{location}</td><td><span style='color:#2e7d32;font-weight:bold;'>Auto-Approved 🛒</span></td><td>N/A</td></tr>"
+            status_badge = "<span style='color:#2e7d32;font-weight:bold;'>Approved ✅</span>" if row[3] else "<span style='color:#f57c00;font-weight:bold;'>Revoked ⏳</span>"
+            action_btn = "Revoke" if row[3] else "Approve"
+            btn_class = "btn-revoke" if row[3] else "btn-approve"
+            form = f'<form action="/admin/user/toggle/{phone}" method="post" style="margin:0;"><button type="submit" class="btn {btn_class}">{action_btn}</button></form>'
+            buyers_html += f"<tr><td>{name}</td><td>+{phone}</td><td>{location}</td><td>{status_badge}</td><td>{form}</td></tr>"
 
         cursor.close()
         conn.close()
@@ -1360,6 +1373,7 @@ async def receive_message(request: Request):
                         if fresh_prof and fresh_prof.get("step") == "awaiting_vehicle":
                             send_whatsapp_message(sender_phone, "Responded! 1️⃣ Logistics Profile Detected!\n\nPlease type your **Vehicle License Plate Number** (e.g., AEK-458).")
                         else:
+                            # CLIENT FIX 1: By-pass the NIN input logic directly over to location coordinate capture
                             send_whatsapp_message(sender_phone, "Thanks! Now share your delivery location 📍 OR type your district/city.")
                     elif step == "awaiting_vehicle":
                         update_user_vehicle(sender_phone, text.upper())
@@ -1406,6 +1420,7 @@ async def receive_message(request: Request):
                             if not orders: send_whatsapp_message(sender_phone, "✅ No pending orders.")
                             else:
                                 msg = "📋 *Pending Requests for Review:*\n\n"
+                                # CLIENT FIX 3: Reformat direct acceptance syntax structure avoiding clunky secondary session trees
                                 for o in orders:
                                     msg_block = f"📦 *Order Request #{o[0]}*\n\nBuyer: {o[2]} (📍 {o[4]})\nProduct: {o[1]}\nPreference: {o[5]}\n\n👉 Reply *ACCEPT {o[0]}* to confirm.\n👉 Reply *REJECT {o[0]}* to decline."
                                     send_whatsapp_message(sender_phone, msg_block)
