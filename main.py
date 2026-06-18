@@ -30,7 +30,6 @@ async def startup_event():
         cursor.execute("SELECT version();")
         
         try:
-            # Auto-Migration for new columns needed by client fixes
             cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_approved BOOLEAN DEFAULT FALSE;")
             cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS vehicle_image_id VARCHAR(255);")
             cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS momo_number VARCHAR(255);")
@@ -341,6 +340,18 @@ def assign_driver_update_fee(order_id, driver_phone, fee):
         return True
     except: return False
 
+def update_user_momo(phone_number, momo):
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET momo_number = %s WHERE phone = %s", (momo, phone_number))
+        cursor.execute("UPDATE user_sessions SET current_step = 'awaiting_location' WHERE phone = %s", (phone_number,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
+    except: return False
+
 def get_driver_deliveries(driver_phone):
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -422,18 +433,6 @@ def update_user_vehicle(phone_number, vehicle_number):
         return True
     except: return False
 
-def update_user_momo(phone_number, momo):
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        cursor.execute("UPDATE users SET momo_number = %s WHERE phone = %s", (momo, phone_number))
-        cursor.execute("UPDATE user_sessions SET current_step = 'awaiting_location' WHERE phone = %s", (phone_number,))
-        conn.commit()
-        cursor.close()
-        conn.close()
-        return True
-    except: return False
-
 def update_user_location_and_finish(phone_number, location):
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -453,57 +452,99 @@ def update_user_location_and_finish(phone_number, location):
         return is_approved
     except: return False
 
-def get_market_prices(include_id=False):
+# ========================================================
+# CLIENT FIX 1 & 2: DYNAMIC RECEIPT GENERATOR ENGINE
+# ========================================================
+def build_receipt_string(order_id, phase="PAYMENT"):
+    details = get_delivery_details(order_id)
+    if not details: return "Receipt data is unavailable."
+    
+    o_id, p_name, f_name, f_loc, f_phone, b_name, b_loc, b_phone, pay_method, price, qty, rcpt, sub, d_fee, tot, d_name, d_veh, drv_phone = details
+    
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        if include_id:
-            cursor.execute("SELECT id, crop_name, location, price FROM market_prices ORDER BY crop_name, location")
-        else:
-            cursor.execute("SELECT crop_name, location, price FROM market_prices ORDER BY crop_name, location")
-        results = cursor.fetchall()
+        cursor.execute("SELECT transaction_id, created_at FROM orders WHERE id = %s", (order_id,))
+        row = cursor.fetchone()
+        tx_id = row[0] if row and row[0] else f"OM-{random.randint(10000000, 99999999)}"
+        created_at = row[1] if row and row[1] else datetime.now()
         cursor.close()
         conn.close()
-        return results
-    except: return []
-
-def add_market_price(crop_name, location, price):
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO market_prices (crop_name, location, price) VALUES (%s, %s, %s)", (crop_name, location, price))
-        conn.commit()
-        cursor.close()
-        conn.close()
-        return True
-    except: return False
-
-def delete_market_price(price_id):
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM market_prices WHERE id = %s", (price_id,))
-        conn.commit()
-        cursor.close()
-        conn.close()
-        return True
-    except: return False
-
-def get_dashboard_stats():
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM users;")
-        total_users = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM orders WHERE status != 'DELIVERED';")
-        active_orders = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM orders WHERE status = 'DELIVERED';")
-        total_deliveries = cursor.fetchone()[0]
-        cursor.close()
-        conn.close()
-        return {"total_users": total_users, "active_orders": active_orders, "total_deliveries": total_deliveries}
     except:
-        return {"total_users": 0, "active_orders": 0, "total_deliveries": 0}
+        tx_id = f"OM-{random.randint(10000000, 99999999)}"
+        created_at = datetime.now()
+        
+    rec_num = rcpt if rcpt else f"AGM-{datetime.now().strftime('%Y')}-{str(order_id).zfill(6)}"
+    date_str = created_at.strftime("%d %b %Y") if isinstance(created_at, datetime) else datetime.now().strftime("%d %b %Y")
+    time_str = datetime.now().strftime("%I:%M %p")
+    
+    d_name_display = d_name if d_name else ("Pending Rider Assignment" if d_fee and d_fee > 0 else "Self Pickup / Vendor Delivery")
+    d_veh_display = d_veh if d_veh else "N/A"
+    
+    if phase == "PAYMENT":
+        payment_status = "✅ PAID (FUNDS SECURED IN ESCROW)"
+        delivery_status = "⏳ AWAITING DISPATCH / PICKUP"
+    else:
+        payment_status = "✅ PAID (RELEASED FROM ESCROW)"
+        delivery_status = "✅ DELIVERED & APPROVED BY BUYER"
+
+    receipt_msg = f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     AGRO MARKET 🌱
+   Agricultural Marketplace
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📄 RECEIPT NUMBER:
+{rec_num}
+
+📅 ORDER DATE:
+{date_str}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+👨‍🌾 SELLER DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Seller Name: {f_name}
+Phone Number: +{str(f_phone).lstrip('+')}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🛒 BUYER DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Buyer Name: {b_name}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📦 ORDER DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Product: {str(p_name).upper()}
+Subtotal: SLE {sub}
+Delivery Fee: SLE {d_fee}
+Platform Fee: SLE 5
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💰 PAYMENT DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Total Amount Paid: SLE {tot}
+
+Payment Status:
+{payment_status}
+
+Payment Method:
+Orange Money / Monime Escrow
+
+Transaction ID:
+{tx_id}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚚 DELIVERY DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Rider/Driver Name: {d_name_display}
+Vehicle Type: {d_veh_display}
+
+Delivery Status:
+{delivery_status}
+
+Delivery Time:
+{time_str}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
+    return receipt_msg
 
 def render_order_row(row):
     o_id, b_num, p_item, t_val, state, wallet, rcpt_code, timestamp = row
@@ -685,9 +726,22 @@ async def simulate_webhook_trigger(order_id: int):
         
         if res:
             b_phone, f_phone, p_name, total_amt = res
-            success_msg = f"💳 *Monime Escrow Hold Confirmed!* SLE {total_amt}.00 for your order of *{p_name}* has been successfully secured to our safe settlement account.\n\nFunds are strictly locked down until delivery receipt confirmation is dispatched."
-            send_whatsapp_message(b_phone, success_msg)
-            send_whatsapp_message(f_phone, f"💰 *Escrow Funded Notification!* The buyer has successfully cleared payment parameters via Monime for Order #{order_id} ({p_name}). Proceed with transport logs immediately.")
+            
+            # Post-Payment immediate receipt trigger
+            receipt_msg = build_receipt_string(order_id, phase="PAYMENT")
+            
+            buyer_msg = f"💳 *Payment Successful!* Your payment of SLE {total_amt} for Order #{order_id} has been secured in escrow.\n\nHere is your official order receipt:\n\n{receipt_msg}\n\n*Important:* Once you receive your item, reply with:\n*A.* Confirm Delivery\n*B.* Not Received"
+            send_whatsapp_message(b_phone, buyer_msg)
+            
+            seller_msg = f"💰 *Escrow Funded Notification!* The buyer has secured payment for Order #{order_id}. Proceed with handover/delivery immediately.\n\n{receipt_msg}"
+            send_whatsapp_message(f_phone, seller_msg)
+            
+            details = get_delivery_details(order_id)
+            if details:
+                drv_phone = details[17]
+                if drv_phone:
+                    driver_msg = f"🚚 *Delivery Authorized!*\n\nOrder #{order_id} has been paid for by the buyer. Please proceed with the delivery route."
+                    send_whatsapp_message(drv_phone, driver_msg)
             
         return HTMLResponse("<script>alert('🎉 Monime Escrow Authorization Emulated! WhatsApp processing chains triggered.'); window.close();</script>")
     except Exception as e:
@@ -1059,17 +1113,6 @@ async def admin_dashboard(request: Request):
     """
     return html_content
 
-def search_order_by_receipt(receipt_number):
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, product_name, buyer_phone, farmer_phone, status, total_amount FROM orders WHERE receipt_number = %s", (receipt_number.strip().upper(),))
-        result = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        return result
-    except: return None
-
 @app.get("/admin/logout")
 async def logout(request: Request):
     response = RedirectResponse(url="/admin/login")
@@ -1083,6 +1126,7 @@ def process_confirm_delivery(sender_phone, action_choice):
         cursor = conn.cursor()
         target_buyer = str(sender_phone).strip()
         
+        # Pull exact targeted order by ordering ID descending
         cursor.execute("""
             SELECT id, product_name, farmer_phone, total_amount, subtotal, delivery_fee, delivery_option, driver_phone
             FROM orders WHERE buyer_phone = %s AND status IN ('DELIVERED', 'paid', 'dispatched') AND wallet_status = 'held' ORDER BY id DESC LIMIT 1
@@ -1102,9 +1146,11 @@ def process_confirm_delivery(sender_phone, action_choice):
                 cursor.execute("UPDATE orders SET status = 'Successful', wallet_status = 'released' WHERE id = %s", (o_id,))
                 conn.commit()
                 
-                send_whatsapp_message(target_buyer, "✅ You have successfully confirmed delivery! The escrow funds have been securely released to the seller.")
+                receipt_payload = build_receipt_string(o_id, phase="DELIVERY")
+                send_whatsapp_message(target_buyer, "✅ You have successfully confirmed delivery! The escrow funds have been securely released to the seller.\n\n" + receipt_payload)
+                
                 if str(target_buyer) != str(target_farmer_phone):
-                    send_whatsapp_message(str(target_farmer_phone), f"💸 *Escrow Balance Released!* Order #{o_id} delivery was confirmed by the buyer. SLE {total_amt} has been deposited to your wallet.")
+                    send_whatsapp_message(str(target_farmer_phone), f"💸 *Escrow Balance Released!* Order #{o_id} delivery was confirmed by the buyer. SLE {total_amt} has been deposited to your wallet.\n\n" + receipt_payload)
                     
                 if ADMIN_PHONE:
                     send_whatsapp_message(ADMIN_PHONE, f"🔔 *ADMIN ALERT: Escrow Cleared* \n\nOrder #{o_id} ({str(p_name).upper()}) has been successfully fulfilled. Funds are released.")
@@ -1162,183 +1208,26 @@ async def monime_payment_webhook(request: Request):
             if res:
                 b_phone, f_phone, p_name, total_amt = res
                 
+                receipt_msg = build_receipt_string(order_id, phase="PAYMENT")
+                
+                buyer_msg = f"💳 *Payment Successful!* Your payment of SLE {total_amt} for Order #{order_id} has been secured in escrow.\n\nHere is your official order receipt:\n\n{receipt_msg}\n\n*Important:* Once you receive your item, reply with:\n*A.* Confirm Delivery\n*B.* Not Received"
+                send_whatsapp_message(b_phone, buyer_msg)
+                
+                seller_msg = f"💰 *Escrow Funded Notification!* The buyer has secured payment for Order #{order_id}. Proceed with handover/delivery immediately.\n\n{receipt_msg}"
+                send_whatsapp_message(f_phone, seller_msg)
+                
                 details = get_delivery_details(order_id)
-                drv_phone = None
                 if details:
-                    o_id, p_name, f_name, f_loc, f_phone, b_name, b_loc, b_phone, pay_method, price, qty, rcpt, sub, d_fee, tot, d_name, d_veh, drv_phone = details
-                    
-                    d_name_display = d_name if d_name else ("Pending Rider Assignment" if d_fee and d_fee > 0 else "Self Pickup / Vendor Delivery")
-                    d_veh_display = d_veh if d_veh else "N/A"
-                    date_now = datetime.now().strftime("%d %b %Y")
-                    
-                    receipt_msg = f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-         AGRO MARKET 🌱
-   Agricultural Marketplace
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-📄 RECEIPT NUMBER:
-{str(rec_num)}
-
-📅 ORDER DATE:
-{str(date_now)}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-👨‍🌾 SELLER DETAILS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Seller Name: {str(f_name)}
-Phone Number: +{str(f_phone).lstrip('+')}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🛒 BUYER DETAILS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Buyer Name: {str(b_name)}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📦 ORDER DETAILS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Product: {str(p_name).upper()}
-Quantity: {str(qty)}
-Subtotal: SLE {str(sub)}
-Delivery Fee: SLE {str(d_fee)}
-Platform Fee: SLE 5
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-💰 PAYMENT DETAILS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Total Amount Paid: SLE {str(tot)}
-
-Payment Status:
-✅ PAID (FUNDS SECURED IN ESCROW)
-
-Payment Method:
-Orange Money / Monime Escrow
-
-Transaction ID:
-{str(tx_id)}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🚚 DELIVERY DETAILS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Rider/Driver Name: {str(d_name_display)}
-Vehicle Type: {str(d_veh_display)}
-
-Delivery Status:
-⏳ AWAITING DISPATCH / PICKUP
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
-
-                    buyer_msg = f"💳 *Payment Successful!* Your payment of SLE {total_amt} for Order #{order_id} has been secured in escrow.\n\nHere is your official order receipt:\n\n{receipt_msg}\n\n*Important:* Once you receive your item, reply with:\n*A.* Confirm Delivery\n*B.* Not Received"
-                    send_whatsapp_message(b_phone, buyer_msg)
-                    
-                    seller_msg = f"💰 *Escrow Funded Notification!* The buyer has secured payment for Order #{order_id}. Proceed with handover/delivery immediately.\n\n{receipt_msg}"
-                    send_whatsapp_message(f_phone, seller_msg)
-                    
+                    drv_phone = details[17]
                     if drv_phone:
-                        driver_msg = f"🚚 *Delivery Authorized!*\n\nOrder #{order_id} has been paid for by the buyer. Please proceed with the delivery route."
+                        driver_msg = f"🚚 *Delivery Authorized!*\n\nOrder #{order_id} has been paid for by the buyer. Please proceed with the delivery route.\n\n{receipt_msg}"
                         send_whatsapp_message(drv_phone, driver_msg)
                 
             cursor.close()
             conn.close()
-    except Exception as e: pass
+    except Exception as e: 
+        print(f"Webhook Exception: {e}")
     return {"status": "processed"}
-
-# ========================================================
-# Helper Function to Trigger Payment Link Generation
-# ========================================================
-def generate_payment_link(order_id, action_user_phone=None):
-    try:
-        order_details = get_order_by_id(order_id)
-        if not order_details: return
-        _, p_name, b_phone, b_name, status, pref, pay_method, receipt, subtotal, d_fee, total_amt, wallet = order_details
-        
-        update_order_status(order_id, "AWAITING_PAYMENT")
-        
-        token = os.getenv("MONIME_SECRET_KEY")
-        space_id = os.getenv("MONIME_SPACE_ID")
-        unique_idempotency_token = f"key_{order_id}_{secrets.token_hex(8)}"
-        
-        monime_payload = {
-            "name": f"Agro Market Order #{order_id}",
-            "reference": str(order_id),
-            "successUrl": "https://agro-market-bot.onrender.com/admin", 
-            "cancelUrl": "https://agro-market-bot.onrender.com/admin",
-            "lineItems": [
-                {
-                    "type": "custom",
-                    "name": str(p_name).upper(),
-                    "price": {
-                        "currency": "SLE",
-                        "value": int(total_amt) * 100 
-                    },
-                    "quantity": 1
-                }
-            ]
-        }
-        
-        monime_headers = {
-            "Authorization": f"Bearer {token}",
-            "Idempotency-Key": unique_idempotency_token,
-            "Content-Type": "application/json",
-            "Accept": "application/json"
-        }
-        
-        api_url = "https://api.monime.io/v1/checkout-sessions"
-        if token and str(token).startswith("mon_test_"):
-            api_url = "https://api.sandbox.monime.io/v1/checkout-sessions"
-            monime_headers["X-Space-Id"] = str(space_id).strip()
-        else:
-            if space_id:
-                monime_headers["Monime-Space-Id"] = str(space_id).strip()
-        
-        response = requests.post(api_url, headers=monime_headers, json=monime_payload, timeout=15)
-        
-        if response.status_code in [200, 201]:
-            res_data = response.json()
-            live_url = res_data.get("result", {}).get("redirectUrl") or res_data.get("redirectUrl") or res_data.get("result", {}).get("url") or res_data.get("url")
-            
-            if live_url:
-                summary = f"📦 *Order Summary:*\nProduct: {p_name.upper()}\nSubtotal: SLE {subtotal}\nDelivery Fee: SLE {d_fee}\nPlatform Fee: SLE 5\n*Total Payable: SLE {total_amt}*"
-                send_whatsapp_message(b_phone, f"🎉 *Good News!* The final availability has been confirmed.\n\n{summary}\n\n🔗 *Monime Live Payment Link:*\n{live_url}")
-            else:
-                if action_user_phone: send_whatsapp_message(action_user_phone, f"⚠️ API Success, but URL token string missing: {res_data}")
-        else:
-            if action_user_phone: send_whatsapp_message(action_user_phone, f"❌ *Monime API Rejected the Payload!*\nStatus Code: {response.status_code}\nError Details: {response.text}")
-            simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
-            send_whatsapp_message(b_phone, f"🎉 *Order Confirmed!* (Fallback Simulator Link):\n🔗 {simulated_paylink}")
-            
-    except Exception as api_err:
-        if action_user_phone: send_whatsapp_message(action_user_phone, f"❌ *Connection Exception details caught:* {str(api_err)}")
-        simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
-        send_whatsapp_message(b_phone, f"🔗 Fallback Simulator Link:\n{simulated_paylink}")
-        
-    if action_user_phone:
-        update_session(action_user_phone, "main_menu", "idle")
-        send_whatsapp_message(action_user_phone, "✅ Buyer has been notified to complete payment.")
-        prof = get_user_profile(action_user_phone)
-        if prof and prof.get("is_approved"):
-            send_main_menu(action_user_phone, prof["role"], prof.get("language", "english"))
-
-def assign_driver_update_fee(order_id, driver_phone, fee):
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        cursor.execute("UPDATE orders SET driver_phone = %s, delivery_fee = %s, total_amount = subtotal + 5 + %s WHERE id = %s", (driver_phone, fee, fee, order_id))
-        conn.commit()
-        cursor.close()
-        conn.close()
-        return True
-    except: return False
-
-def update_user_momo(phone_number, momo):
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        cursor.execute("UPDATE users SET momo_number = %s WHERE phone = %s", (momo, phone_number))
-        cursor.execute("UPDATE user_sessions SET current_step = 'awaiting_location' WHERE phone = %s", (phone_number,))
-        conn.commit()
-        cursor.close()
-        conn.close()
-        return True
-    except: return False
 
 # ========================================================
 # MAIN WEBHOOK - ALL FEATURES + TEXT NAVIGATION
@@ -1409,6 +1298,7 @@ async def receive_message(request: Request):
                 text = message_data["text"]["body"].strip()
                 text_lower = text.lower()
                 
+                # A/B Confirm Delivery intercept blocks
                 if text_lower in ["a", "a.", "confirm delivery", "confirm"]:
                     process_confirm_delivery(sender_phone, "A")
                     return {"status": "ok"}
@@ -1424,7 +1314,6 @@ async def receive_message(request: Request):
                         order_details = get_order_by_id(order_id)
                         if order_details and profile and profile.get("role") in ["role_farmer", "role_input"]:
                             pref = order_details[5] if order_details else "pickup"
-                            
                             if pref == "delivery":
                                 update_session_data(sender_phone, {"target_order": order_id})
                                 update_session(sender_phone, "manage_order", "awaiting_delivery_choice")
@@ -1550,10 +1439,16 @@ async def receive_message(request: Request):
                             orders = get_farmer_orders(sender_phone)
                             if not orders: send_whatsapp_message(sender_phone, "✅ No pending orders.")
                             else:
-                                msg = "📋 *Pending Requests for Review:*\n\n"
-                                for o in orders:
-                                    msg_block = f"📦 *Order Request #{o[0]}*\n\nBuyer: {o[2]} (📍 {o[4]})\nProduct: {o[1]}\nPreference: {o[5]}\n\n👉 Reply *ACCEPT {o[0]}* to confirm.\n👉 Reply *REJECT {o[0]}* to decline."
-                                    send_whatsapp_message(sender_phone, msg_block)
+                                msg = "📋 *Pending Orders:*\n\n"
+                                temp_map = {}
+                                for idx, o in enumerate(orders, 1):
+                                    # Output format 1. Orders for [Buyer Name]
+                                    msg += f"{idx}️⃣ Orders for {o[2]}\n"
+                                    temp_map[str(idx)] = o[0]
+                                msg += "\n_Reply with a number to view & manage_"
+                                update_session_data(sender_phone, {"manage_map": temp_map})
+                                update_session(sender_phone, "manage_order", "awaiting_selection")
+                                send_whatsapp_message(sender_phone, msg)
                         elif text_lower == "4":
                             update_session(sender_phone, "farmer_search", "awaiting_search_query")
                             update_session_data(sender_phone, {"search_category": "input"})
@@ -1604,9 +1499,14 @@ async def receive_message(request: Request):
                             if not orders: send_whatsapp_message(sender_phone, "✅ No pending orders.")
                             else:
                                 msg = "📋 *Pending Orders:*\n\n"
-                                for o in orders:
-                                    msg_block = f"📦 *Order Request #{o[0]}*\n\nBuyer: {o[2]} (📍 {o[4]})\nProduct: {o[1]}\nPreference: {o[5]}\n\n👉 Reply *ACCEPT {o[0]}* to confirm.\n👉 Reply *REJECT {o[0]}* to decline."
-                                    send_whatsapp_message(sender_phone, msg_block)
+                                temp_map = {}
+                                for idx, o in enumerate(orders, 1):
+                                    msg += f"{idx}️⃣ Orders for {o[2]}\n"
+                                    temp_map[str(idx)] = o[0]
+                                msg += "\n_Reply with a number to view & manage_"
+                                update_session_data(sender_phone, {"manage_map": temp_map})
+                                update_session(sender_phone, "manage_order", "awaiting_selection")
+                                send_whatsapp_message(sender_phone, msg)
                         elif text_lower == "4":
                             prices = get_market_prices()
                             msg = "📊 *Today's Market Prices:*\n\n"
@@ -1716,7 +1616,11 @@ async def receive_message(request: Request):
                             if order_map:
                                 send_whatsapp_message(sender_phone, f"🕒 *Order Submitted!*\nSubtotal: SLE {order_map['subtotal']}\nPlatform Fee: SLE 5\n\nWaiting for seller to confirm stock availability.")
                                 farmer_phone = order_map['farmer_phone']
-                                alert_msg = f"🚨 *NEW ORDER REQUEST!* 🚨\n\n📦 Item: {order_map['product_name']}\n🔢 Quantity: {order_qty}\n💰 Unit Price: SLE {order_map['price']}\n\n👉 Reply *ACCEPT {order_map['id']}* to confirm availability.\n👉 Reply *REJECT {order_map['id']}* to decline."
+                                alert_msg = f"🚨 *NEW ORDER REQUEST!* 🚨\n\n📦 Item: {order_map['product_name']}\n🔢 Quantity: {order_qty}\n💰 Unit Price: SLE {order_map['price']}\n\n1️⃣ Accept Request ✅\n2️⃣ Reject Order ❌\n\n_Reply 1 or 2_"
+                                
+                                # Session override for frictionless 1-click acceptance
+                                update_session_data(farmer_phone, {"target_order": order_map['id']})
+                                update_session(farmer_phone, "manage_order", "awaiting_action")
                                 send_whatsapp_message(farmer_phone, alert_msg)
                             update_session(sender_phone, "main_menu", "idle")
                             return {"status": "ok"}
@@ -1739,7 +1643,10 @@ async def receive_message(request: Request):
                             send_whatsapp_message(sender_phone, f"📍 Name & Address Saved.\n\n🕒 *Order Submitted!*\nSubtotal: SLE {order_map['subtotal']}\nPlatform Fee: SLE 5\n\nWaiting for seller to confirm stock and assign a delivery route cost.")
                             farmer_phone = order_map['farmer_phone']
                             
-                            alert_msg = f"🚨 *NEW ORDER REQUEST!* 🚨\n\nBuyer Name: {custom_buyer_name}\nAddress: {delivery_address}\nPhone: +{sender_phone}\n\n📦 Item: {order_map['product_name']}\n🔢 Quantity: {order_qty}\n💰 Unit Price: SLE {order_map['price']}\n\n👉 Reply *ACCEPT {order_map['id']}* to confirm availability.\n👉 Reply *REJECT {order_map['id']}* to decline."
+                            alert_msg = f"🚨 *NEW ORDER REQUEST!* 🚨\n\nBuyer Name: {custom_buyer_name}\nAddress: {delivery_address}\nPhone: +{sender_phone}\n\n📦 Item: {order_map['product_name']}\n🔢 Quantity: {order_qty}\n💰 Unit Price: SLE {order_map['price']}\n\n1️⃣ Accept Request ✅\n2️⃣ Reject Order ❌\n\n_Reply 1 or 2_"
+                            
+                            update_session_data(farmer_phone, {"target_order": order_map['id']})
+                            update_session(farmer_phone, "manage_order", "awaiting_action")
                             send_whatsapp_message(farmer_phone, alert_msg)
                         update_session(sender_phone, "main_menu", "idle")
 
@@ -1883,5 +1790,5 @@ async def receive_message(request: Request):
 
         return {"status": "ok"}
     except Exception as e:
-        print(f"Error logic layer main arrays: {e}")
+        pass
     return {"status": "ok"}
