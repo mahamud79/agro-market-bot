@@ -30,6 +30,7 @@ async def startup_event():
         cursor.execute("SELECT version();")
         
         try:
+            # Auto-Migration for new columns needed by client fixes
             cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_approved BOOLEAN DEFAULT FALSE;")
             cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS vehicle_image_id VARCHAR(255);")
             cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS momo_number VARCHAR(255);")
@@ -101,11 +102,11 @@ def get_user_profile(phone_number):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        cursor.execute("SELECT u.role, u.nin_status, u.language, us.current_flow, us.current_step, u.name, u.vehicle_number, u.is_approved FROM users u LEFT JOIN user_sessions us ON u.phone = us.phone WHERE u.phone = %s", (phone_number,))
+        cursor.execute("SELECT u.role, u.nin_status, u.language, us.current_flow, us.current_step, u.name, u.vehicle_number, u.is_approved, u.momo_number FROM users u LEFT JOIN user_sessions us ON u.phone = us.phone WHERE u.phone = %s", (phone_number,))
         result = cursor.fetchone()
         cursor.close()
         conn.close()
-        if result: return {"role": result[0], "nin_status": result[1], "language": result[2] or "english", "flow": result[3], "step": result[4], "name": result[5], "vehicle_number": result[6], "is_approved": result[7]}
+        if result: return {"role": result[0], "nin_status": result[1], "language": result[2] or "english", "flow": result[3], "step": result[4], "name": result[5], "vehicle_number": result[6], "is_approved": result[7], "momo_number": result[8]}
         return None
     except: return None
 
@@ -504,10 +505,17 @@ def get_dashboard_stats():
     except:
         return {"total_users": 0, "active_orders": 0, "total_deliveries": 0}
 
+def render_order_row(row):
+    o_id, b_num, p_item, t_val, state, wallet, rcpt_code, timestamp = row
+    rcpt_display = rcpt_code if rcpt_code else "<span style='color:#777;font-style:italic;'>Unreleased</span>"
+    status_color = "#f57c00" if state in ["pending", "AWAITING_PAYMENT", "AWAITING_DRIVER"] else "#0288d1" if state in ["paid", "dispatched"] else "#2e7d32" if state in ["DELIVERED", "Successful"] else "#d32f2f"
+    wallet_color = "#7b1fa2" if wallet == "held" else "#2e7d32" if wallet == "released" else "#555"
+    return f"<tr><td><b>#{o_id}</b></td><td>+{b_num}</td><td>{str(p_item).upper()}</td><td>SLE {t_val}</td><td><span style=\"background:{status_color};color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;\">{state.upper()}</span></td><td><span style=\"background:{wallet_color};color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;\">{str(wallet).upper()}</span></td><td><code>{rcpt_display}</code></td></tr>"
+
 # ========================================================
 # SECURE HELPER FUNCTION FOR CHECKOUT
 # ========================================================
-def trigger_payment_link(order_id, action_user_phone=None):
+def generate_payment_link(order_id, action_user_phone=None):
     try:
         order_details = get_order_by_id(order_id)
         if not order_details: return
@@ -579,24 +587,6 @@ def trigger_payment_link(order_id, action_user_phone=None):
         prof = get_user_profile(action_user_phone)
         if prof and prof.get("is_approved"):
             send_main_menu(action_user_phone, prof["role"], prof.get("language", "english"))
-
-def assign_driver_update_fee(order_id, driver_phone, fee):
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        cursor.execute("UPDATE orders SET driver_phone = %s, delivery_fee = %s, total_amount = subtotal + 5 + %s WHERE id = %s", (driver_phone, fee, fee, order_id))
-        conn.commit()
-        cursor.close()
-        conn.close()
-        return True
-    except: return False
-
-def render_order_row(row):
-    o_id, b_num, p_item, t_val, state, wallet, rcpt_code, timestamp = row
-    rcpt_display = rcpt_code if rcpt_code else "<span style='color:#777;font-style:italic;'>Unreleased</span>"
-    status_color = "#f57c00" if state in ["pending", "AWAITING_PAYMENT", "AWAITING_DRIVER"] else "#0288d1" if state in ["paid", "dispatched"] else "#2e7d32" if state in ["DELIVERED", "Successful"] else "#d32f2f"
-    wallet_color = "#7b1fa2" if wallet == "held" else "#2e7d32" if wallet == "released" else "#555"
-    return f"<tr><td><b>#{o_id}</b></td><td>+{b_num}</td><td>{str(p_item).upper()}</td><td>SLE {t_val}</td><td><span style=\"background:{status_color};color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;\">{state.upper()}</span></td><td><span style=\"background:{wallet_color};color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;\">{str(wallet).upper()}</span></td><td><code>{rcpt_display}</code></td></tr>"
 
 # ========================================================
 # SECURE ADMIN WEB DASHBOARD ROUTES
@@ -811,7 +801,6 @@ async def admin_dashboard(request: Request):
         for row in cursor.fetchall():
             pending_ledger_rows += render_order_row(row)
         
-        # CLIENT FIX 5: Expose MoMo Number in Admin Dash
         cursor.execute("SELECT name, phone, location, is_approved, momo_number FROM users WHERE role IN ('role_farmer', 'role_input') ORDER BY is_approved DESC, created_at ASC LIMIT 1000;")
         farmers_html = ""
         for row in cursor.fetchall():
@@ -1094,7 +1083,6 @@ def process_confirm_delivery(sender_phone, action_choice):
         cursor = conn.cursor()
         target_buyer = str(sender_phone).strip()
         
-        # CLIENT FIX 1: Exact ordering syntax to guarantee the correct latest escrow record is pulled
         cursor.execute("""
             SELECT id, product_name, farmer_phone, total_amount, subtotal, delivery_fee, delivery_option, driver_phone
             FROM orders WHERE buyer_phone = %s AND status IN ('DELIVERED', 'paid', 'dispatched') AND wallet_status = 'held' ORDER BY id DESC LIMIT 1
@@ -1104,7 +1092,6 @@ def process_confirm_delivery(sender_phone, action_choice):
         if escrow_match:
             o_id, p_name, target_farmer_phone, total_amt, s_total, d_fee, d_opt, target_driver_phone = escrow_match
             
-            # CLIENT FIX 3: Dynamic A/B Completion Rules
             if action_choice == "A":
                 monime_api_endpoint = "https://api.monime.io/v1/financial-account/transfers"
                 monime_headers = {"Authorization": f"Bearer {MONIME_SECRET_KEY}", "Content-Type": "application/json"}
@@ -1184,7 +1171,6 @@ async def monime_payment_webhook(request: Request):
                     d_veh_display = d_veh if d_veh else "N/A"
                     date_now = datetime.now().strftime("%d %b %Y")
                     
-                    # CLIENT FIX 1 & 2: Removed Buyer Phone Number, Explicit Total Display, Instant Generation Triggered upon callback
                     receipt_msg = f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━
          AGRO MARKET 🌱
    Agricultural Marketplace
@@ -1423,8 +1409,7 @@ async def receive_message(request: Request):
                 text = message_data["text"]["body"].strip()
                 text_lower = text.lower()
                 
-                # Dynamic Intercept blocks for specific global commands
-                if text_lower in ["a", "a.", "confirm delivery"]:
+                if text_lower in ["a", "a.", "confirm delivery", "confirm"]:
                     process_confirm_delivery(sender_phone, "A")
                     return {"status": "ok"}
                     
@@ -1753,6 +1738,7 @@ async def receive_message(request: Request):
                         if order_map:
                             send_whatsapp_message(sender_phone, f"📍 Name & Address Saved.\n\n🕒 *Order Submitted!*\nSubtotal: SLE {order_map['subtotal']}\nPlatform Fee: SLE 5\n\nWaiting for seller to confirm stock and assign a delivery route cost.")
                             farmer_phone = order_map['farmer_phone']
+                            
                             alert_msg = f"🚨 *NEW ORDER REQUEST!* 🚨\n\nBuyer Name: {custom_buyer_name}\nAddress: {delivery_address}\nPhone: +{sender_phone}\n\n📦 Item: {order_map['product_name']}\n🔢 Quantity: {order_qty}\n💰 Unit Price: SLE {order_map['price']}\n\n👉 Reply *ACCEPT {order_map['id']}* to confirm availability.\n👉 Reply *REJECT {order_map['id']}* to decline."
                             send_whatsapp_message(farmer_phone, alert_msg)
                         update_session(sender_phone, "main_menu", "idle")
@@ -1877,7 +1863,7 @@ async def receive_message(request: Request):
                                 o_id, p_name, _, _, f_phone, b_name, _, b_phone, *rest = details
                                 msg = f"🚚 *Job #{o_id} In Progress*\n\n📦 Item: {p_name}\n🎯 Dropoff: {b_name}\n📞 Seller: wa.me/{f_phone}\n📞 Buyer: wa.me/{b_phone}\n\n1️⃣ Mark Package Delivered ✅\n2️⃣ Cancel Route ❌\n\n_Reply 1 or 2_"
                                 update_session_data(sender_phone, {"target_job": order_id})
-                                update_session(sender_phone, "driver_flow", "awaiting_confirm_complete")
+                                update_session(sender_phone, "driver_flow", "awaiting_complete")
                                 send_whatsapp_message(sender_phone, msg)
                         else:
                             send_whatsapp_message(sender_phone, "Invalid number.")
