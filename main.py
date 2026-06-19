@@ -452,13 +452,12 @@ def update_user_location_and_finish(phone_number, location):
         return is_approved
     except: return False
 
-
 # ========================================================
-# UNIVERSAL TRANSACTION CARD GENERATOR (PRE & POST PAYMENT)
+# CLIENT FIX 1: DYNAMIC RECEIPT GENERATOR ENGINE
 # ========================================================
-def build_transaction_card(order_id, phase="INVOICE", role="buyer", payment_link=""):
+def build_receipt_string(order_id, phase="PAYMENT", role="buyer", payment_link=""):
     details = get_delivery_details(order_id)
-    if not details: return "Data unavailable."
+    if not details: return "Receipt data is unavailable."
     
     o_id, p_name, f_name, f_loc, f_phone, b_name, b_loc, b_phone, pay_method, price, qty, rcpt, sub, d_fee, tot, d_name, d_veh, drv_phone = details
     
@@ -467,12 +466,12 @@ def build_transaction_card(order_id, phase="INVOICE", role="buyer", payment_link
         cursor = conn.cursor()
         cursor.execute("SELECT transaction_id, created_at FROM orders WHERE id = %s", (order_id,))
         row = cursor.fetchone()
-        tx_id = row[0] if row and row[0] else f"OM-{random.randint(10000000, 99999999)}"
+        tx_id = row[0] if row and row[0] else "N/A"
         created_at = row[1] if row and row[1] else datetime.now()
         cursor.close()
         conn.close()
     except:
-        tx_id = f"OM-{random.randint(10000000, 99999999)}"
+        tx_id = "N/A"
         created_at = datetime.now()
         
     rec_num = rcpt if rcpt else f"AGM-{datetime.now().strftime('%Y')}-{str(order_id).zfill(6)}"
@@ -481,87 +480,96 @@ def build_transaction_card(order_id, phase="INVOICE", role="buyer", payment_link
     
     d_name_display = d_name if d_name else ("Pending Rider Assignment" if d_fee and d_fee > 0 else "Self Pickup / Vendor Delivery")
     d_veh_display = d_veh if d_veh else "N/A"
-
-    # Start Building Card
-    card = f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n         AGRO MARKET 🌱\n   Agricultural Marketplace\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-
-    if phase == "INVOICE":
-        card += f"📄 ORDER NUMBER:\nAGM-ORD-{o_id}\n\n"
-    else:
-        card += f"📄 RECEIPT NUMBER:\n{rec_num}\n\n"
-        
-    card += f"📅 ORDER DATE:\n{date_str}\n\n"
-
-    # Point of View switching
-    if role == "buyer":
-        card += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n👨‍🌾 SELLER DETAILS\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        card += f"Seller Name: {f_name}\nPhone Number: +{str(f_phone).lstrip('+')}\n\n"
-    else:
-        card += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🛒 BUYER DETAILS\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        card += f"Buyer Name: {b_name}\nPhone Number: +{str(b_phone).lstrip('+')}\n\n"
-
-    card += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📦 ORDER DETAILS\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    card += f"Product: {str(p_name).upper()}\nQuantity: {qty}\nSubtotal: Le {sub}\nDelivery Fee: Le {d_fee}\nPlatform Fee: Le 5\n\n"
-
-    card += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n💰 PAYMENT DETAILS\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     
     if phase == "INVOICE":
-        card += f"Total Amount Payable: Le {tot}\n\n"
-        if role == "buyer":
-            card += f"Payment Status:\n⏳ AWAITING PAYMENT\n\n🔗 *Monime Live Payment Link:*\n{payment_link}\n"
-        else:
-            card += f"Payment Status:\n⏳ AWAITING BUYER PAYMENT\n"
-            
+        doc_type = "ORDER NUMBER"
+        payment_status = "⏳ AWAITING PAYMENT"
+        delivery_status = "⏳ PENDING DISPATCH"
+        tx_id = "N/A"
+        amount_title = "Total Amount Payable"
     elif phase == "PAYMENT":
-        card += f"Total Amount Paid: Le {tot}\n\n"
-        card += f"Payment Status:\n✅ PAID (FUNDS SECURED IN ESCROW)\n\nPayment Method:\nOrange Money / Monime Escrow\n\nTransaction ID:\n{tx_id}\n\n"
-        card += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🚚 DELIVERY DETAILS\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        card += f"Rider/Driver Name: {d_name_display}\nVehicle Type: {d_veh_display}\n\nDelivery Status:\n⏳ AWAITING DISPATCH / PICKUP\n"
-        
-    elif phase == "DELIVERY":
-        card += f"Total Amount Paid: Le {tot}\n\n"
-        card += f"Payment Status:\n✅ PAID (RELEASED FROM ESCROW)\n\nPayment Method:\nOrange Money / Monime Escrow\n\nTransaction ID:\n{tx_id}\n\n"
-        card += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🚚 DELIVERY DETAILS\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        card += f"Rider/Driver Name: {d_name_display}\nVehicle Type: {d_veh_display}\n\nDelivery Status:\n✅ DELIVERED & APPROVED BY BUYER\n\nDelivery Time:\n{time_str}\n"
+        doc_type = "RECEIPT NUMBER"
+        payment_status = "✅ PAID (FUNDS SECURED IN ESCROW)"
+        delivery_status = "⏳ AWAITING DISPATCH / PICKUP"
+        amount_title = "Total Amount Paid"
+    else:
+        doc_type = "RECEIPT NUMBER"
+        payment_status = "✅ PAID (RELEASED FROM ESCROW)"
+        delivery_status = "✅ DELIVERED & APPROVED BY BUYER"
+        amount_title = "Total Amount Paid"
 
-    card += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    return card
+    receipt_msg = f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     AGRO MARKET 🌱
+   Agricultural Marketplace
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def get_market_prices(include_id=False):
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        if include_id:
-            cursor.execute("SELECT id, crop_name, location, price FROM market_prices ORDER BY crop_name, location")
-        else:
-            cursor.execute("SELECT crop_name, location, price FROM market_prices ORDER BY crop_name, location")
-        results = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        return results
-    except: return []
+📄 {doc_type}:
+{rec_num}
 
-def add_market_price(crop_name, location, price):
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO market_prices (crop_name, location, price) VALUES (%s, %s, %s)", (crop_name, location, price))
-        conn.commit()
-        cursor.close()
-        conn.close()
-        return True
-    except: return False
+📅 ORDER DATE:
+{date_str}
 
-def delete_market_price(price_id):
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM market_prices WHERE id = %s", (price_id,))
-        conn.commit()
-        cursor.close()
-        conn.close()
-        return True
-    except: return False
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+👨‍🌾 SELLER DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Seller Name: {f_name}"""
+
+    if role != "seller":
+        receipt_msg += f"\nPhone Number: +{str(f_phone).lstrip('+')}"
+
+    receipt_msg += f"""
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🛒 BUYER DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Buyer Name: {b_name}"""
+
+    if role != "buyer":
+        receipt_msg += f"\nPhone Number: +{str(b_phone).lstrip('+')}"
+
+    receipt_msg += f"""
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📦 ORDER DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Product: {str(p_name).upper()}
+Subtotal: Le {sub}
+Delivery Fee: Le {d_fee}
+Platform Fee: Le 5
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💰 PAYMENT DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{amount_title}: Le {tot}
+
+Payment Status:
+{payment_status}
+
+Payment Method:
+Orange Money / Monime Escrow
+
+Transaction ID:
+{tx_id}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚚 DELIVERY DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Rider/Driver Name: {d_name_display}
+Vehicle Type: {d_veh_display}
+Vehicle Number: {d_veh_display if d_veh else 'N/A'}
+
+Delivery Status:
+{delivery_status}"""
+
+    if phase == "DELIVERY":
+        receipt_msg += f"\n\nDelivery Time:\n{time_str}"
+
+    receipt_msg += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    if phase == "INVOICE" and payment_link:
+        receipt_msg += f"\n\n🔗 *Monime Live Payment Link:*\n{payment_link}"
+
+    return receipt_msg
 
 def get_dashboard_stats():
     try:
@@ -641,13 +649,13 @@ def generate_payment_link(order_id, action_user_phone=None):
             live_url = res_data.get("result", {}).get("redirectUrl") or res_data.get("redirectUrl") or res_data.get("result", {}).get("url") or res_data.get("url")
             
             if live_url:
-                buyer_card = build_transaction_card(order_id, phase="INVOICE", role="buyer", payment_link=live_url)
-                send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability.\n\n{buyer_card}")
+                # CLIENT FIX 1 & 2: Generate universal ASCII layout for pre-payment phase
+                buyer_card = build_receipt_string(order_id, phase="INVOICE", role="buyer", payment_link=live_url)
+                send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability.\n\nPlease complete your payment using the link in the invoice below:\n\n{buyer_card}")
                 
                 if action_user_phone:
-                    seller_card = build_transaction_card(order_id, phase="INVOICE", role="seller")
-                    send_whatsapp_message(action_user_phone, f"✅ You have successfully approved Order #{order_id}.\n\n{seller_card}")
-                    
+                    seller_card = build_receipt_string(order_id, phase="INVOICE", role="seller", payment_link="")
+                    send_whatsapp_message(action_user_phone, f"✅ You have successfully approved Order #{order_id}.\n\nThe invoice has been sent to the buyer:\n\n{seller_card}")
             else:
                 if action_user_phone: send_whatsapp_message(action_user_phone, f"⚠️ API Success, but URL token string missing: {res_data}")
         else:
@@ -665,7 +673,6 @@ def generate_payment_link(order_id, action_user_phone=None):
         prof = get_user_profile(action_user_phone)
         if prof and prof.get("is_approved"):
             send_main_menu(action_user_phone, prof["role"], prof.get("language", "english"))
-
 
 # ========================================================
 # SECURE ADMIN WEB DASHBOARD ROUTES
@@ -765,11 +772,11 @@ async def simulate_webhook_trigger(order_id: int):
         if res:
             b_phone, f_phone, p_name, total_amt = res
             
-            buyer_card = build_transaction_card(order_id, phase="PAYMENT", role="buyer")
+            buyer_card = build_receipt_string(order_id, phase="PAYMENT", role="buyer")
             buyer_msg = f"💳 *Payment Successful!*\n\n{buyer_card}\n\n*Important:* Once you receive your item, reply with:\n*A.* Confirm Delivery\n*B.* Not Received"
             send_whatsapp_message(b_phone, buyer_msg)
             
-            seller_card = build_transaction_card(order_id, phase="PAYMENT", role="seller")
+            seller_card = build_receipt_string(order_id, phase="PAYMENT", role="seller")
             seller_msg = f"💰 *Escrow Funded Notification!* The buyer has secured payment for Order #{order_id}. Proceed with handover/delivery immediately.\n\n{seller_card}"
             send_whatsapp_message(f_phone, seller_msg)
             
@@ -777,7 +784,8 @@ async def simulate_webhook_trigger(order_id: int):
             if details:
                 drv_phone = details[17]
                 if drv_phone:
-                    driver_msg = f"🚚 *Delivery Authorized!*\n\nOrder #{order_id} has been paid for by the buyer. Please proceed with the delivery route.\n\n{seller_card}"
+                    driver_card = build_receipt_string(order_id, phase="PAYMENT", role="driver")
+                    driver_msg = f"🚚 *Delivery Authorized!*\n\nOrder #{order_id} has been paid for by the buyer. Please proceed with the delivery route.\n\n{driver_card}"
                     send_whatsapp_message(drv_phone, driver_msg)
             
         return HTMLResponse("<script>alert('🎉 Monime Escrow Authorization Emulated! WhatsApp processing chains triggered.'); window.close();</script>")
@@ -1150,6 +1158,17 @@ async def admin_dashboard(request: Request):
     """
     return html_content
 
+def search_order_by_receipt(receipt_number):
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, product_name, buyer_phone, farmer_phone, status, total_amount FROM orders WHERE receipt_number = %s", (receipt_number.strip().upper(),))
+        result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        return result
+    except: return None
+
 @app.get("/admin/logout")
 async def logout(request: Request):
     response = RedirectResponse(url="/admin/login")
@@ -1163,7 +1182,6 @@ def process_confirm_delivery(sender_phone, action_choice):
         cursor = conn.cursor()
         target_buyer = str(sender_phone).strip()
         
-        # CLIENT FIX: Ensure explicit descending ID fetch to pull the actual active transaction
         cursor.execute("""
             SELECT id, product_name, farmer_phone, total_amount, subtotal, delivery_fee, delivery_option, driver_phone
             FROM orders WHERE buyer_phone = %s AND status IN ('DELIVERED', 'paid', 'dispatched') AND wallet_status = 'held' ORDER BY id DESC LIMIT 1
@@ -1183,11 +1201,11 @@ def process_confirm_delivery(sender_phone, action_choice):
                 cursor.execute("UPDATE orders SET status = 'Successful', wallet_status = 'released' WHERE id = %s", (o_id,))
                 conn.commit()
                 
-                buyer_card = build_transaction_card(o_id, phase="DELIVERY", role="buyer")
+                buyer_card = build_receipt_string(o_id, phase="DELIVERY", role="buyer")
                 send_whatsapp_message(target_buyer, f"✅ You have successfully confirmed delivery! The escrow funds have been securely released to the seller.\n\n{buyer_card}")
                 
                 if str(target_buyer) != str(target_farmer_phone):
-                    seller_card = build_transaction_card(o_id, phase="DELIVERY", role="seller")
+                    seller_card = build_receipt_string(o_id, phase="DELIVERY", role="seller")
                     send_whatsapp_message(str(target_farmer_phone), f"💸 *Escrow Balance Released!* Order #{o_id} delivery was confirmed by the buyer. Le {total_amt} has been deposited to your wallet.\n\n{seller_card}")
                     
                 if ADMIN_PHONE:
@@ -1246,12 +1264,11 @@ async def monime_payment_webhook(request: Request):
             if res:
                 b_phone, f_phone, p_name, total_amt = res
                 
-                # CLIENT FIX: Immediately trigger fully styled receipt upon successful payment
-                buyer_card = build_transaction_card(order_id, phase="PAYMENT", role="buyer")
-                buyer_msg = f"💳 *Payment Successful!*\n\n{buyer_card}\n\n*Important:* Once you receive your item, reply with:\n*A.* Confirm Delivery\n*B.* Not Received"
+                buyer_card = build_receipt_string(order_id, phase="PAYMENT", role="buyer")
+                buyer_msg = f"💳 *Payment Successful!* Your payment of SLE {total_amt} for Order #{order_id} has been secured in escrow.\n\nHere is your official order receipt:\n\n{buyer_card}\n\n*Important:* Once you receive your item, reply with:\n*A.* Confirm Delivery\n*B.* Not Received"
                 send_whatsapp_message(b_phone, buyer_msg)
                 
-                seller_card = build_transaction_card(order_id, phase="PAYMENT", role="seller")
+                seller_card = build_receipt_string(order_id, phase="PAYMENT", role="seller")
                 seller_msg = f"💰 *Escrow Funded Notification!* The buyer has secured payment for Order #{order_id}. Proceed with handover/delivery immediately.\n\n{seller_card}"
                 send_whatsapp_message(f_phone, seller_msg)
                 
@@ -1259,7 +1276,8 @@ async def monime_payment_webhook(request: Request):
                 if details:
                     drv_phone = details[17]
                     if drv_phone:
-                        driver_msg = f"🚚 *Delivery Authorized!*\n\nOrder #{order_id} has been paid for by the buyer. Please proceed with the delivery route.\n\n{seller_card}"
+                        driver_card = build_receipt_string(order_id, phase="PAYMENT", role="driver")
+                        driver_msg = f"🚚 *Delivery Authorized!*\n\nOrder #{order_id} has been paid for by the buyer. Please proceed with the delivery route.\n\n{driver_card}"
                         send_whatsapp_message(drv_phone, driver_msg)
                 
             cursor.close()
@@ -1446,7 +1464,6 @@ async def process_webhook_payload(body: dict):
                             orders = get_farmer_orders(sender_phone)
                             if not orders: send_whatsapp_message(sender_phone, "✅ No pending orders.")
                             else:
-                                # CLIENT FIX 4: Explicit "1. Orders for X" enumeration format
                                 msg = "📋 *Pending Orders:*\n\n"
                                 temp_map = {}
                                 for idx, o in enumerate(orders, 1):
@@ -1666,7 +1683,6 @@ async def process_webhook_payload(body: dict):
                             order_details = get_order_by_id(order_id)
                             if order_details:
                                 _, p_name, b_phone, b_name, status, pref, pay_method, receipt, subtotal, d_fee, total_amt, wallet = order_details
-                                # CLIENT FIX 4: Explicit Clean Acceptance Formatting
                                 msg = f"📦 *Order Request #{order_id}*\n\nBuyer: {b_name}\nProduct: {str(p_name).upper()}\nPreference: {pref}\n\n1. Accept\n2. Reject\n\n_Reply 1 or 2_"
                                 update_session_data(sender_phone, {"target_order": order_id})
                                 update_session(sender_phone, "manage_order", "awaiting_action")
