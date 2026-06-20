@@ -478,7 +478,7 @@ def build_receipt_string(order_id, phase="PAYMENT"):
     date_str = created_at.strftime("%d %b %Y") if isinstance(created_at, datetime) else datetime.now().strftime("%d %b %Y")
     
     if phase == "PAYMENT":
-        payment_status = "Payment Secured in Escrow\n\nPlease Confirm Delivery of Products as soon as product is delivered "
+        payment_status = "Payment Secured in Escrow\n\nPlease Confirm Delivery of Products as soon as product is delivered"
     else:
         payment_status = "Payment Released\n\nProduct Delivery Confirmed ✅"
 
@@ -627,7 +627,7 @@ def generate_payment_link(order_id, action_user_phone=None):
             if live_url:
                 # CLIENT FIX 1 & 2: Simple order summary sent PRIOR to payment, real receipt comes AFTER payment
                 summary = f"📦 *Order Summary:*\nProduct: {p_name.upper()}\nSubtotal: SLE {subtotal}\nDelivery Fee: SLE {d_fee}\nPlatform Fee: SLE 5\n*Total Payable: SLE {total_amt}*"
-                send_whatsapp_message(b_phone, f"🎉 *Good News!* The seller has confirmed availability.\n\n{summary}\n\n🔗 *Monime Live Payment Link:*\n{live_url}")
+                send_whatsapp_message(b_phone, f"🎉 *Good News!* The final availability has been confirmed.\n\n{summary}\n\n🔗 *Monime Live Payment Link:*\n{live_url}")
                 
                 if action_user_phone:
                     send_whatsapp_message(action_user_phone, f"✅ You have successfully approved Order #{order_id}. The payment link has been securely sent to the buyer.")
@@ -746,9 +746,13 @@ async def simulate_webhook_trigger(order_id: int):
         
         if res:
             b_phone, f_phone, p_name, total_amt = res
-            success_msg = f"💳 *Monime Escrow Hold Confirmed!* SLE {total_amt}.00 for your order of *{p_name}* has been successfully secured to our safe settlement account.\n\nFunds are strictly locked down until delivery receipt confirmation is dispatched."
-            send_whatsapp_message(b_phone, success_msg)
-            send_whatsapp_message(f_phone, f"💰 *Escrow Funded Notification!* The buyer has successfully cleared payment parameters via Monime for Order #{order_id} ({p_name}). Proceed with transport logs immediately.")
+            
+            buyer_receipt = build_receipt_string(order_id, phase="PAYMENT")
+            buyer_msg = f"💳 *Payment Successful!*\n\n{buyer_receipt}\n\n*Important:* Once you receive your item, reply with:\n*A.* Confirm Delivery\n*B.* No Delivery"
+            send_whatsapp_message(b_phone, buyer_msg)
+            
+            seller_msg = f"💰 *Escrow Funded Notification!*\n\nThe buyer has secured payment for Order #{order_id}. Proceed with handover/delivery immediately.\n\n{buyer_receipt}"
+            send_whatsapp_message(f_phone, seller_msg)
             
         return HTMLResponse("<script>alert('🎉 Monime Escrow Authorization Emulated! WhatsApp processing chains triggered.'); window.close();</script>")
     except Exception as e:
@@ -1153,12 +1157,11 @@ def process_confirm_delivery(sender_phone, action_choice):
                 cursor.execute("UPDATE orders SET status = 'Successful', wallet_status = 'released' WHERE id = %s", (o_id,))
                 conn.commit()
                 
-                buyer_receipt = build_receipt_string(o_id, phase="DELIVERY", role="buyer")
-                send_whatsapp_message(target_buyer, f"✅ You have successfully confirmed delivery! The escrow funds have been securely released to the seller.\n\n{buyer_receipt}")
+                receipt_payload = build_receipt_string(o_id, phase="DELIVERY")
+                send_whatsapp_message(target_buyer, f"✅ You have successfully confirmed delivery! The escrow funds have been securely released to the seller.\n\n{receipt_payload}")
                 
                 if str(target_buyer) != str(target_farmer_phone):
-                    seller_receipt = build_receipt_string(o_id, phase="DELIVERY", role="seller")
-                    send_whatsapp_message(str(target_farmer_phone), f"💸 *Escrow Balance Released!* Order #{o_id} delivery was confirmed by the buyer. SLE {total_amt} has been deposited to your wallet.\n\n{seller_receipt}")
+                    send_whatsapp_message(str(target_farmer_phone), f"💸 *Escrow Balance Released!* Order #{o_id} delivery was confirmed by the buyer. SLE {total_amt} has been deposited to your wallet.\n\n{receipt_payload}")
                     
                 if ADMIN_PHONE:
                     send_whatsapp_message(ADMIN_PHONE, f"🔔 *ADMIN ALERT: Escrow Cleared* \n\nOrder #{o_id} ({str(p_name).upper()}) has been successfully fulfilled. Funds are released.")
@@ -1216,21 +1219,13 @@ async def monime_payment_webhook(request: Request):
             if res:
                 b_phone, f_phone, p_name, total_amt = res
                 
-                # CLIENT FIX: Immediately trigger fully styled short receipt upon successful payment
-                buyer_receipt = build_receipt_string(order_id, phase="PAYMENT", role="buyer")
-                buyer_msg = f"💳 *Payment Successful!*\n\n{buyer_receipt}\n\n*Important:* Once you receive your item, reply with:\n*A.* Confirm Delivery\n*B.* No Delivery"
+                receipt_msg = build_receipt_string(order_id, phase="PAYMENT")
+                
+                buyer_msg = f"💳 *Payment Successful!*\n\n{receipt_msg}\n\n*Important:* Reply with:\n*A.* Confirm Delivery\n*B.* No Delivery"
                 send_whatsapp_message(b_phone, buyer_msg)
                 
-                seller_receipt = build_receipt_string(order_id, phase="PAYMENT", role="seller")
-                seller_msg = f"💰 *Escrow Funded Notification!*\n\nThe buyer has secured payment for Order #{order_id}. Proceed with handover/delivery immediately.\n\n{seller_receipt}"
+                seller_msg = f"💰 *Payment Secured!*\n\n{receipt_msg}"
                 send_whatsapp_message(f_phone, seller_msg)
-                
-                details = get_delivery_details(order_id)
-                if details:
-                    drv_phone = details[17]
-                    if drv_phone:
-                        driver_msg = f"🚚 *Delivery Authorized!*\n\nOrder #{order_id} has been paid for by the buyer. Please proceed with the delivery route."
-                        send_whatsapp_message(drv_phone, driver_msg)
                 
             cursor.close()
             conn.close()
@@ -1569,7 +1564,6 @@ async def process_webhook_payload(body: dict):
                             update_session_data(sender_phone, {"search_results": result_dict})
                             update_session(sender_phone, flow, "awaiting_item_selection")
                             send_whatsapp_message(sender_phone, msg)
-                            
                             
                     elif step == "awaiting_item_selection":
                         session_data = get_session_data(sender_phone)
