@@ -1562,12 +1562,14 @@ async def process_webhook_payload(body: dict):
                             msg = f"🔍 Found these for '{text}':\n\n"
                             result_dict = {}
                             for idx, item in enumerate(results, 1):
-                                msg += f"{idx}️⃣ {item[1]} - {item[2]} ({item[3]})\n🧑‍🌾 Seller: {item[6]} (📍 {item[7]})\n\n"
+                                # Client Fix: Added "Le" before the price variable {item[2]}
+                                msg += f"{idx}️⃣ {item[1]} - Le {item[2]} ({item[3]})\n🧑‍🌾 Seller: {item[6]} (📍 {item[7]})\n\n"
                                 result_dict[str(idx)] = item[0] 
                             msg += "_Reply with the number to view the item, or type 'menu'_"
                             update_session_data(sender_phone, {"search_results": result_dict})
                             update_session(sender_phone, flow, "awaiting_item_selection")
                             send_whatsapp_message(sender_phone, msg)
+                            
                             
                     elif step == "awaiting_item_selection":
                         session_data = get_session_data(sender_phone)
