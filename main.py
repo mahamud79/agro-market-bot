@@ -1603,7 +1603,7 @@ async def process_webhook_payload(body: dict):
                         if text_lower.isdigit():
                             update_session_data(sender_phone, {"temp_buy_qty": int(text_lower)})
                             update_session(sender_phone, "buyer_checkout", "awaiting_delivery")
-                            send_whatsapp_message(sender_phone, "📦 Delivery Selection\n\nHow would you like to receive this?\n1️⃣ Request Local Delivery (Van, Bike, Truck) 🚚\n2️⃣ Self Pickup / Vendor Delivery 🚶\n\n_Reply 1 or 2_")
+                            send_whatsapp_message(sender_phone, "📦 Delivery Selection\n\nHow would you like to receive this?\n1️⃣ Request Local Delivery (Van, Bike, Truck) 🚚\n2️⃣ Self Pickup \n\n_Reply 1 or 2_")
                         else:
                             send_whatsapp_message(sender_phone, "Invalid quantity. Please reply with a number.")
                             
