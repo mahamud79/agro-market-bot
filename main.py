@@ -455,7 +455,6 @@ def update_user_location_and_finish(phone_number, location):
 # ========================================================
 # CLIENT FIX: DYNAMIC SHORT RECEIPT GENERATOR ENGINE
 # ========================================================
-# Note: Stripped all "role" arguments to prevent Webhook TypeErrors.
 def build_receipt_string(order_id, phase="PAYMENT"):
     details = get_delivery_details(order_id)
     if not details: return "Receipt data is unavailable."
@@ -573,6 +572,25 @@ def render_order_row(row):
     # Adding Delete Form to the Dashboard row
     delete_form = f'<form action="/admin/order/delete/{o_id}" method="post" style="margin:0;"><button type="submit" class="btn btn-reject" style="padding: 4px 8px; font-size: 11px;">Delete</button></form>'
     return f"<tr><td><b>#{o_id}</b></td><td>+{b_num}</td><td>{str(p_item).upper()}</td><td>SLE {t_val}</td><td><span style=\"background:{status_color};color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;\">{state.upper()}</span></td><td><span style=\"background:{wallet_color};color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;\">{str(wallet).upper()}</span></td><td><code>{rcpt_display}</code></td><td>{delete_form}</td></tr>"
+
+# ========================================================
+# RECURSIVE HELPER FOR MONIME PAYLOAD EXTRACTION
+# ========================================================
+def find_order_id(obj, target_keys=("reference", "order_id", "orderNumber")):
+    """Recursively search for order ID inside unknown payload structures."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k in target_keys and v:
+                return v
+            found = find_order_id(v, target_keys)
+            if found:
+                return found
+    elif isinstance(obj, list):
+        for item in obj:
+            found = find_order_id(item, target_keys)
+            if found:
+                return found
+    return None
 
 # ========================================================
 # SECURE HELPER FUNCTION FOR CHECKOUT
@@ -751,10 +769,10 @@ async def simulate_webhook_trigger(order_id: int):
             b_phone, f_phone, p_name, total_amt = res
             
             buyer_receipt = build_receipt_string(order_id, phase="PAYMENT")
-            buyer_msg = f"💳 *Payment Successful!*\n\n{buyer_receipt}\n\n*Important:* Once you receive your item, reply with:\n*A.* Confirm Delivery\n*B.* No Delivery"
+            buyer_msg = f"💳 *Payment Successful!*\n\n{buyer_receipt}\n\n*Important:* Reply with:\n*A.* Confirm Delivery\n*B.* No Delivery"
             send_whatsapp_message(b_phone, buyer_msg)
             
-            seller_msg = f"💰 *Escrow Funded Notification!*\n\nThe buyer has secured payment for Order #{order_id}. Proceed with handover/delivery immediately.\n\n{buyer_receipt}"
+            seller_msg = f"💰 *Payment Secured!*\n\n{buyer_receipt}"
             send_whatsapp_message(f_phone, seller_msg)
             
         return HTMLResponse("<script>alert('🎉 Monime Escrow Authorization Emulated! WhatsApp processing chains triggered.'); window.close();</script>")
@@ -1153,7 +1171,6 @@ def process_confirm_delivery(sender_phone, action_choice):
         cursor = conn.cursor()
         target_buyer = str(sender_phone).strip()
         
-        # CLIENT FIX 5: Explicitly grab the MOST RECENT pending/paid order to fix the 4000 vs 7 SLE bug
         cursor.execute("""
             SELECT id, product_name, farmer_phone, total_amount, subtotal, delivery_fee, delivery_option, driver_phone
             FROM orders WHERE buyer_phone = %s AND status IN ('DELIVERED', 'paid', 'dispatched') AND wallet_status = 'held' ORDER BY id DESC LIMIT 1
@@ -1200,29 +1217,46 @@ def process_confirm_delivery(sender_phone, action_choice):
 # ========================================================
 # LIVE PRODUCTION MONIME WEBHOOK ENDPOINT
 # ========================================================
+
+def find_order_id(obj, target_keys=("reference", "order_id", "orderNumber")):
+    """Recursively search for order ID inside unknown payload structures."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k in target_keys and v:
+                return v
+            found = find_order_id(v, target_keys)
+            if found:
+                return found
+    elif isinstance(obj, list):
+        for item in obj:
+            found = find_order_id(item, target_keys)
+            if found:
+                return found
+    return None
+
 @app.post("/webhook/monime")
 async def monime_payment_webhook(request: Request):
     try:
         payload = await request.json()
-        print(f"WEBHOOK RAW PAYLOAD: {payload}")
+        print(f"🔔 MONIME WEBHOOK RAW PAYLOAD: {json.dumps(payload)}")
         
-        # Loosened webhook condition check so Monime won't fail the verification
-        order_id = None
-        result_obj = payload.get("result", {})
+        event = payload.get("event", "")
         
-        if "reference" in result_obj:
-            order_id = result_obj["reference"]
-        elif "order_id" in payload.get("metadata", {}):
-            order_id = payload["metadata"]["order_id"]
-        elif "orderNumber" in result_obj:
-            order_id = result_obj["orderNumber"]
-            
-        if order_id and isinstance(order_id, str) and order_id.startswith("AGM-ORD-"):
+        # Robust extraction
+        order_id_raw = find_order_id(payload)
+        if not order_id_raw:
+            print("❌ No order_id found in payload.")
+            return {"status": "ignored"}
+        
+        order_id = str(order_id_raw)
+        if order_id.startswith("AGM-ORD-"):
             order_id = order_id.replace("AGM-ORD-", "")
             
-        if order_id and str(order_id).isdigit():
+        if event in ["payment.completed", "checkout_session.completed", "payment.success"] and order_id.isdigit():
             conn = psycopg2.connect(DATABASE_URL)
             cursor = conn.cursor()
+            
+            result_obj = payload.get("result") or payload.get("data") or {}
             tx_id = result_obj.get("id") or result_obj.get("transaction_id") or f"OM-{random.randint(10000000, 99999999)}"
             rec_num = result_obj.get("orderNumber") or f"AGM-{datetime.now().strftime('%Y')}-{str(order_id).zfill(6)}"
             
@@ -1237,7 +1271,6 @@ async def monime_payment_webhook(request: Request):
             if res:
                 b_phone, f_phone, p_name, total_amt = res
                 
-                # CLIENT FIX: Type Error fixed by removing `role` parameter.
                 receipt_msg = build_receipt_string(order_id, phase="PAYMENT")
                 
                 buyer_msg = f"💳 *Payment Successful!*\n\n{receipt_msg}\n\n*Important:* Reply with:\n*A.* Confirm Delivery\n*B.* No Delivery"
@@ -1576,7 +1609,6 @@ async def process_webhook_payload(body: dict):
                             msg = f"🔍 Found these for '{text}':\n\n"
                             result_dict = {}
                             for idx, item in enumerate(results, 1):
-                                # Client Fix: Added "Le" before the price variable {item[2]}
                                 msg += f"{idx}️⃣ {item[1].title()} - Le {item[2]} ({item[3]})\n🧑‍🌾 Seller: {item[6]} (📍 {item[7]})\n\n"
                                 result_dict[str(idx)] = item[0] 
                             msg += "_Reply with the number to view the item, or type 'menu'_"
