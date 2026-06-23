@@ -1240,7 +1240,10 @@ async def monime_payment_webhook(request: Request):
         payload = await request.json()
         print(f"🔔 MONIME WEBHOOK RAW PAYLOAD: {json.dumps(payload)}")
         
-        event = payload.get("event", "")
+        # Monime nests the event name inside an "event" object:
+        # {"event": {"id": "...", "name": "payment.processing_completed", ...}}
+        event_obj = payload.get("event", {})
+        event = event_obj.get("name", "") if isinstance(event_obj, dict) else str(event_obj)
         
         # Robust extraction
         order_id_raw = find_order_id(payload)
@@ -1251,13 +1254,33 @@ async def monime_payment_webhook(request: Request):
         order_id = str(order_id_raw)
         if order_id.startswith("AGM-ORD-"):
             order_id = order_id.replace("AGM-ORD-", "")
-            
-        if event in ["payment.completed", "checkout_session.completed", "payment.success"] and order_id.isdigit():
+        
+        result_obj = payload.get("data") or payload.get("result") or {}
+        
+        # checkout_session.completed can fire before the underlying mobile-money
+        # payment actually clears. payment.processing_completed with status
+        # "completed" is the definitive "funds have moved" signal — that's
+        # what should trigger the receipt.
+        is_final_success = (
+            event == "payment.processing_completed" and result_obj.get("status") == "completed"
+        )
+        
+        if is_final_success and order_id.isdigit():
             conn = psycopg2.connect(DATABASE_URL)
             cursor = conn.cursor()
             
-            result_obj = payload.get("result") or payload.get("data") or {}
-            tx_id = result_obj.get("id") or result_obj.get("transaction_id") or f"OM-{random.randint(10000000, 99999999)}"
+            # Idempotency guard — Monime can (and did, in your logs) redeliver
+            # the same event more than once. Skip if already processed.
+            cursor.execute("SELECT status FROM orders WHERE id = %s", (int(order_id),))
+            existing = cursor.fetchone()
+            
+            if existing and existing[0] == 'paid':
+                print(f"⏭️ Order #{order_id} already marked paid — skipping duplicate notification.")
+                cursor.close()
+                conn.close()
+                return {"status": "duplicate_ignored"}
+            
+            tx_id = result_obj.get("financialTransactionReference") or result_obj.get("id") or f"OM-{random.randint(10000000, 99999999)}"
             rec_num = result_obj.get("orderNumber") or f"AGM-{datetime.now().strftime('%Y')}-{str(order_id).zfill(6)}"
             
             cursor.execute("""
@@ -1281,6 +1304,8 @@ async def monime_payment_webhook(request: Request):
                 
             cursor.close()
             conn.close()
+        else:
+            print(f"ℹ️ Event '{event}' (status={result_obj.get('status')}) is not the final-success event — ignoring.")
     except Exception as e: 
         print(f"Webhook Exception: {e}")
     return {"status": "processed"}
