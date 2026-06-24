@@ -610,6 +610,7 @@ def generate_payment_link(order_id, action_user_phone=None):
         monime_payload = {
             "name": f"Agro Market Order #{order_id}",
             "reference": str(order_id),
+            "metadata": {"order_id": str(order_id)},
             "successUrl": "https://agro-market-bot.onrender.com/admin", 
             "cancelUrl": "https://agro-market-bot.onrender.com/admin",
             "lineItems": [
@@ -1256,13 +1257,24 @@ async def monime_payment_webhook(request: Request):
             order_id = order_id.replace("AGM-ORD-", "")
         
         result_obj = payload.get("data") or payload.get("result") or {}
-        
-        # checkout_session.completed can fire before the underlying mobile-money
-        # payment actually clears. payment.processing_completed with status
-        # "completed" is the definitive "funds have moved" signal — that's
-        # what should trigger the receipt.
+        data_status = str(result_obj.get("status", "")).lower()
+
+        # Per Monime's webhook docs, a hosted Checkout Session only emits:
+        #   checkout_session.expired | checkout_session.cancelled | checkout_session.completed
+        # `checkout_session.completed` is the definitive "payment collected"
+        # signal for our payment-link flow — that's what must trigger the
+        # receipt. We also accept `payment_code.completed` (USSD/payment-code
+        # flow) and the legacy `payment.processing_completed` for compatibility.
+        # The event name is authoritative; we only additionally reject a
+        # terminal-failure status when one is present in the payload.
+        SUCCESS_EVENTS = {
+            "checkout_session.completed",
+            "payment_code.completed",
+            "payment.processing_completed",
+        }
         is_final_success = (
-            event == "payment.processing_completed" and result_obj.get("status") == "completed"
+            event in SUCCESS_EVENTS
+            and data_status not in ("failed", "cancelled", "canceled", "expired")
         )
         
         if is_final_success and order_id.isdigit():
