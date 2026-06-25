@@ -85,8 +85,16 @@ def send_whatsapp_image(phone_number, image_id, caption_text):
         url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
         headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
         payload = {"messaging_product": "whatsapp", "to": phone_number, "type": "image", "image": {"id": image_id, "caption": caption_text}}
-        requests.post(url, headers=headers, json=payload, timeout=10)
-    except Exception as e: pass
+        resp = requests.post(url, headers=headers, json=payload, timeout=10)
+        # Report success so callers can fall back to a text message when the
+        # media id is missing/expired (otherwise the user silently sees nothing).
+        if resp.status_code != 200:
+            print(f"⚠️ send_whatsapp_image failed ({resp.status_code}): {resp.text}")
+            return False
+        return True
+    except Exception as e:
+        print(f"⚠️ send_whatsapp_image exception: {e}")
+        return False
 
 def send_role_menu(phone_number, lang="english"):
     t = LANGUAGES.get("english")
@@ -1662,9 +1670,13 @@ async def process_webhook_payload(body: dict):
                             if details:
                                 p_id, p_name, price, qty, img_id, f_phone, f_name, loc = details
                                 caption = f"📦 *{p_name}*\n💰 Unit Price: SLE {price}\n⚖️ Available Stock: {qty}\n🧑‍🌾 Seller: {f_name} ({loc})\n\n1️⃣ 🛒 Place Order\n2️⃣ 🔍 Search Again\n\n_Reply 1 or 2_"
-                                send_whatsapp_image(sender_phone, img_id, caption)
+                                delivered = send_whatsapp_image(sender_phone, img_id, caption) if img_id else False
+                                if not delivered:
+                                    send_whatsapp_message(sender_phone, caption)
                                 update_session_data(sender_phone, {"temp_buy_id": p_id})
                                 update_session(sender_phone, flow, "awaiting_buy_decision")
+                            else:
+                                send_whatsapp_message(sender_phone, "😕 Sorry, that item is no longer available. Please reply with another number, or type 'menu'.")
                         else:
                             send_whatsapp_message(sender_phone, "Invalid number. Please try again.")
                             
