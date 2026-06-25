@@ -1254,8 +1254,21 @@ async def monime_payment_webhook(request: Request):
         event_obj = payload.get("event", {})
         event = event_obj.get("name", "") if isinstance(event_obj, dict) else str(event_obj)
         
-        # Robust extraction
-        order_id_raw = find_order_id(payload)
+        # Identify which order this payment belongs to. We explicitly set BOTH
+        # `reference` and `metadata.order_id` to our order id when creating the
+        # checkout session, so read those first; only then fall back to a scan.
+        # We deliberately avoid Monime's own numeric `orderNumber`, which would
+        # silently target a non-existent order and skip the receipt.
+        result_obj = payload.get("data") or payload.get("result") or {}
+        order_id_raw = None
+        if isinstance(result_obj, dict):
+            meta = result_obj.get("metadata")
+            if isinstance(meta, dict) and meta.get("order_id"):
+                order_id_raw = meta.get("order_id")
+            if not order_id_raw and result_obj.get("reference"):
+                order_id_raw = result_obj.get("reference")
+        if not order_id_raw:
+            order_id_raw = find_order_id(payload, target_keys=("order_id", "reference"))
         if not order_id_raw:
             print("❌ No order_id found in payload.")
             return {"status": "ignored"}
