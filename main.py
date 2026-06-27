@@ -483,7 +483,7 @@ def build_receipt_string(order_id, phase="PAYMENT"):
         created_at = datetime.now()
         
     rec_num = rcpt if rcpt else f"AGM-{datetime.now().strftime('%Y')}-{str(order_id).zfill(6)}"
-    date_str = created_at.strftime("%d %b %Y") if isinstance(created_at, datetime) else datetime.now().strftime("%d %b %Y")
+    date_str = created_at.strftime("%d %b %Y, %I:%M %p") if isinstance(created_at, datetime) else datetime.now().strftime("%d %b %Y, %I:%M %p")
     
     if phase == "PAYMENT":
         payment_status = "Payment Secured in Escrow\n\nPlease Confirm Delivery of Products as soon as product is delivered"
@@ -498,8 +498,8 @@ PAYMENT RECEIPT
 🧾 Receipt: {rec_num}
  {date_str}
 
-👨‍🌾 Seller: {f_name}
-🛒 Buyer: {b_name}
+👨‍🌾 Seller: {f_name} (+{f_phone})
+🛒 Buyer: {b_name} (+{b_phone})
 
 📦 Product: {str(p_name).upper()}
 
@@ -512,7 +512,7 @@ PAYMENT RECEIPT
 Agro Market is powered by
 Salgro Limited
 
-📞 +232 88 580063
+📞 +232 99166746
 📧 info@agromarketbot.com
 ━━━━━━━━━━━━━━━━━━━━━━
 Thank you for trading with Agro Market!"""
@@ -572,14 +572,24 @@ def get_dashboard_stats():
         return {"total_users": 0, "active_orders": 0, "total_deliveries": 0}
 
 def render_order_row(row):
-    o_id, b_num, p_item, t_val, state, wallet, rcpt_code, timestamp = row
+    o_id, b_num, p_item, t_val, state, wallet, rcpt_code, timestamp, seller_name, seller_phone, buyer_name = row
     rcpt_display = rcpt_code if rcpt_code else "<span style='color:#777;font-style:italic;'>Unreleased</span>"
     status_color = "#f57c00" if state in ["pending", "AWAITING_PAYMENT", "AWAITING_DRIVER"] else "#0288d1" if state in ["paid", "dispatched"] else "#2e7d32" if state in ["DELIVERED", "Successful"] else "#d32f2f"
     wallet_color = "#7b1fa2" if wallet == "held" else "#2e7d32" if wallet == "released" else "#555"
-    
+
+    # Date & time of the transaction
+    if isinstance(timestamp, datetime):
+        dt_display = timestamp.strftime("%d %b %Y, %I:%M %p")
+    else:
+        dt_display = str(timestamp) if timestamp else "—"
+
+    # Seller and buyer details (name + phone) for the transaction record
+    seller_disp = (str(seller_name) if seller_name else "Unknown") + (f"<br><span style='color:#888;font-size:11px;'>+{seller_phone}</span>" if seller_phone else "")
+    buyer_disp = (str(buyer_name) if buyer_name else "Unknown") + (f"<br><span style='color:#888;font-size:11px;'>+{b_num}</span>" if b_num else "")
+
     # Adding Delete Form to the Dashboard row
     delete_form = f'<form action="/admin/order/delete/{o_id}" method="post" style="margin:0;"><button type="submit" class="btn btn-reject" style="padding: 4px 8px; font-size: 11px;">Delete</button></form>'
-    return f"<tr><td><b>#{o_id}</b></td><td>+{b_num}</td><td>{str(p_item).upper()}</td><td>SLE {t_val}</td><td><span style=\"background:{status_color};color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;\">{state.upper()}</span></td><td><span style=\"background:{wallet_color};color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;\">{str(wallet).upper()}</span></td><td><code>{rcpt_display}</code></td><td>{delete_form}</td></tr>"
+    return f"<tr><td><b>#{o_id}</b></td><td>{dt_display}</td><td>{seller_disp}</td><td>{buyer_disp}</td><td>{str(p_item).upper()}</td><td>SLE {t_val}</td><td><span style=\"background:{status_color};color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;\">{state.upper()}</span></td><td><span style=\"background:{wallet_color};color:white;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;\">{str(wallet).upper()}</span></td><td><code>{rcpt_display}</code></td><td>{delete_form}</td></tr>"
 
 # ========================================================
 # RECURSIVE HELPER FOR MONIME PAYLOAD EXTRACTION
@@ -897,15 +907,15 @@ async def admin_dashboard(request: Request):
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         
-        cursor.execute("SELECT id, buyer_phone, product_name, total_amount, status, wallet_status, receipt_number, created_at FROM orders WHERE status = 'Successful' ORDER BY created_at DESC LIMIT 1000;")
+        cursor.execute("SELECT o.id, o.buyer_phone, o.product_name, o.total_amount, o.status, o.wallet_status, o.receipt_number, o.created_at, f.name, f.phone, b.name FROM orders o LEFT JOIN users f ON o.farmer_phone = f.phone LEFT JOIN users b ON o.buyer_phone = b.phone WHERE o.status = 'Successful' ORDER BY o.created_at DESC LIMIT 1000;")
         for row in cursor.fetchall():
             successful_ledger_rows += render_order_row(row)
             
-        cursor.execute("SELECT id, buyer_phone, product_name, total_amount, status, wallet_status, receipt_number, created_at FROM orders WHERE status IN ('Unsuccessful', 'DECLINED') ORDER BY created_at DESC LIMIT 1000;")
+        cursor.execute("SELECT o.id, o.buyer_phone, o.product_name, o.total_amount, o.status, o.wallet_status, o.receipt_number, o.created_at, f.name, f.phone, b.name FROM orders o LEFT JOIN users f ON o.farmer_phone = f.phone LEFT JOIN users b ON o.buyer_phone = b.phone WHERE o.status IN ('Unsuccessful', 'DECLINED') ORDER BY o.created_at DESC LIMIT 1000;")
         for row in cursor.fetchall():
             unsuccessful_ledger_rows += render_order_row(row)
             
-        cursor.execute("SELECT id, buyer_phone, product_name, total_amount, status, wallet_status, receipt_number, created_at FROM orders WHERE status NOT IN ('Successful', 'Unsuccessful', 'DECLINED') ORDER BY created_at DESC LIMIT 1000;")
+        cursor.execute("SELECT o.id, o.buyer_phone, o.product_name, o.total_amount, o.status, o.wallet_status, o.receipt_number, o.created_at, f.name, f.phone, b.name FROM orders o LEFT JOIN users f ON o.farmer_phone = f.phone LEFT JOIN users b ON o.buyer_phone = b.phone WHERE o.status NOT IN ('Successful', 'Unsuccessful', 'DECLINED') ORDER BY o.created_at DESC LIMIT 1000;")
         for row in cursor.fetchall():
             pending_ledger_rows += render_order_row(row)
         
@@ -1101,7 +1111,7 @@ async def admin_dashboard(request: Request):
                 <h2>✅ Successful Transactions</h2>
                 <input type="text" id="searchSuccessful" class="search-bar" placeholder="🔍 Search completed orders..." onkeyup="onSearch('successfulOrdersTable', 'searchSuccessful', 'successfulPagination')">
                 <table id="successfulOrdersTable">
-                    <thead><tr><th>ID</th><th>Buyer Number</th><th>Product</th><th>Amount</th><th>Order Status</th><th>Escrow State</th><th>Receipt Code</th><th>Action</th></tr></thead>
+                    <thead><tr><th>ID</th><th>Date &amp; Time</th><th>Seller</th><th>Buyer</th><th>Product</th><th>Amount</th><th>Order Status</th><th>Escrow State</th><th>Receipt Code</th><th>Action</th></tr></thead>
                     <tbody>{successful_ledger_rows}</tbody>
                 </table>
                 <div id="successfulPagination" class="pagination"></div>
@@ -1109,7 +1119,7 @@ async def admin_dashboard(request: Request):
                 <h2>⏳ Pending Transactions</h2>
                 <input type="text" id="searchPending" class="search-bar" placeholder="🔍 Search pending or processing orders..." onkeyup="onSearch('pendingOrdersTable', 'searchPending', 'pendingPagination')">
                 <table id="pendingOrdersTable">
-                    <thead><tr><th>ID</th><th>Buyer Number</th><th>Product</th><th>Amount</th><th>Order Status</th><th>Escrow State</th><th>Receipt Code</th><th>Action</th></tr></thead>
+                    <thead><tr><th>ID</th><th>Date &amp; Time</th><th>Seller</th><th>Buyer</th><th>Product</th><th>Amount</th><th>Order Status</th><th>Escrow State</th><th>Receipt Code</th><th>Action</th></tr></thead>
                     <tbody>{pending_ledger_rows}</tbody>
                 </table>
                 <div id="pendingPagination" class="pagination"></div>
@@ -1117,7 +1127,7 @@ async def admin_dashboard(request: Request):
                 <h2>❌ Unsuccessful / Disputed Transactions</h2>
                 <input type="text" id="searchUnsuccessful" class="search-bar" placeholder="🔍 Search declined or disputed orders..." onkeyup="onSearch('unsuccessfulOrdersTable', 'searchUnsuccessful', 'unsuccessfulPagination')">
                 <table id="unsuccessfulOrdersTable">
-                    <thead><tr><th>ID</th><th>Buyer Number</th><th>Product</th><th>Amount</th><th>Order Status</th><th>Escrow State</th><th>Receipt Code</th><th>Action</th></tr></thead>
+                    <thead><tr><th>ID</th><th>Date &amp; Time</th><th>Seller</th><th>Buyer</th><th>Product</th><th>Amount</th><th>Order Status</th><th>Escrow State</th><th>Receipt Code</th><th>Action</th></tr></thead>
                     <tbody>{unsuccessful_ledger_rows}</tbody>
                 </table>
                 <div id="unsuccessfulPagination" class="pagination"></div>
