@@ -411,7 +411,13 @@ These are documented for transparency and future hardening:
 
 ## Credits
 
-Agro Market is powered by **Salgro Limited**.
+**Developed by [Mahamud Hasan](https://github.com/mahamud79)** — design,
+architecture, and full implementation of the platform.
+
+Commissioned by / operated for **Salgro Limited** (client), the business that
+runs the Agro Market service.
+
+Business contact (Salgro Limited):
 
 - 📞 +232 99166746
 - 📧 info@agromarketbot.com
