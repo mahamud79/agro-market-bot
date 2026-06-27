@@ -367,7 +367,7 @@ def get_driver_deliveries(driver_phone):
         cursor.execute("""
             SELECT o.id, o.product_name, f.name, f.location, f.phone, b.name, b.location, b.phone
             FROM orders o JOIN users f ON o.farmer_phone = f.phone JOIN users b ON o.buyer_phone = b.phone
-            WHERE o.driver_phone = %s AND o.status = 'dispatched' ORDER BY o.created_at DESC
+            WHERE o.driver_phone = %s AND o.status IN ('paid', 'dispatched') ORDER BY o.created_at DESC
         """, (driver_phone,))
         results = cursor.fetchall()
         cursor.close()
@@ -1191,7 +1191,7 @@ def process_confirm_delivery(sender_phone, action_choice):
         target_buyer = str(sender_phone).strip()
         
         cursor.execute("""
-            SELECT id, product_name, farmer_phone, total_amount, subtotal, delivery_fee, delivery_option, driver_phone
+            SELECT id, product_name, farmer_phone, total_amount, subtotal, delivery_fee, delivery_preference, driver_phone
             FROM orders WHERE buyer_phone = %s AND status IN ('DELIVERED', 'paid', 'dispatched') AND wallet_status = 'held' ORDER BY id DESC LIMIT 1
         """, (target_buyer,))
         escrow_match = cursor.fetchone()
@@ -1456,7 +1456,7 @@ async def process_webhook_payload(body: dict):
                             
                             update_order_status(order_id, "DECLINED")
                             send_whatsapp_message(sender_phone, f"❌ Request #{order_id} rejected.")
-                            send_whatsapp_message(b_phone, f"遭遇 😔 Unfortunately, the seller declined your request for {p_name}. Try ordering from another listing.")
+                            send_whatsapp_message(b_phone, f"😔 Unfortunately, the seller declined your request for {p_name}. Try ordering from another listing.")
                             update_session(sender_phone, "main_menu", "idle")
                     return
                 
@@ -1808,7 +1808,7 @@ async def process_webhook_payload(body: dict):
                             p_name = order_details[1] if order_details else "item"
                             update_order_status(order_id, "DECLINED")
                             send_whatsapp_message(sender_phone, f"❌ Request #{order_id} rejected.")
-                            send_whatsapp_message(b_phone, f"遭遇 😔 Unfortunately, the seller declined your request for {p_name}. Try ordering from another listing.")
+                            send_whatsapp_message(b_phone, f"😔 Unfortunately, the seller declined your request for {p_name}. Try ordering from another listing.")
                             update_session(sender_phone, "main_menu", "idle")
                             if profile.get("is_approved"):
                                 send_main_menu(sender_phone, profile["role"], profile.get("language", "english"))
@@ -1895,7 +1895,7 @@ async def process_webhook_payload(body: dict):
                                 o_id, p_name, _, _, f_phone, b_name, _, b_phone, *rest = details
                                 msg = f"🚚 *Job #{o_id} In Progress*\n\n📦 Item: {p_name}\n🎯 Dropoff: {b_name}\n📞 Seller: wa.me/{f_phone}\n📞 Buyer: wa.me/{b_phone}\n\n1️⃣ Mark Package Delivered ✅\n2️⃣ Cancel Route ❌\n\n_Reply 1 or 2_"
                                 update_session_data(sender_phone, {"target_job": order_id})
-                                update_session(sender_phone, "driver_flow", "awaiting_complete")
+                                update_session(sender_phone, "driver_flow", "awaiting_confirm_complete")
                                 send_whatsapp_message(sender_phone, msg)
                         else:
                             send_whatsapp_message(sender_phone, "Invalid number.")
