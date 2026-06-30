@@ -14,13 +14,16 @@ load_dotenv()
 
 app = FastAPI()
 
-VERIFY_TOKEN = "my_custom_secure_token"
+VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "my_custom_secure_token")
 DATABASE_URL = os.getenv("DATABASE_URL")
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 ADMIN_PHONE = os.getenv("ADMIN_PHONE")
 MONIME_SECRET_KEY = os.getenv("MONIME_SECRET_KEY")
 MONIME_SPACE_ID = os.getenv("MONIME_SPACE_ID")
+# Public base URL of THIS deployment. Set BASE_URL in the environment so
+# post-payment redirects and fallback links point to the correct server.
+BASE_URL = os.getenv("BASE_URL", "https://agro-market-bot.onrender.com").rstrip("/")
 
 @app.on_event("startup")
 async def startup_event():
@@ -629,8 +632,8 @@ def generate_payment_link(order_id, action_user_phone=None):
             "name": f"Agro Market Order #{order_id}",
             "reference": str(order_id),
             "metadata": {"order_id": str(order_id)},
-            "successUrl": "https://agro-market-bot.onrender.com/admin", 
-            "cancelUrl": "https://agro-market-bot.onrender.com/admin",
+            "successUrl": f"{BASE_URL}/admin", 
+            "cancelUrl": f"{BASE_URL}/admin",
             "lineItems": [
                 {
                     "type": "custom",
@@ -675,12 +678,12 @@ def generate_payment_link(order_id, action_user_phone=None):
                 if action_user_phone: send_whatsapp_message(action_user_phone, f"⚠️ API Success, but URL token string missing: {res_data}")
         else:
             if action_user_phone: send_whatsapp_message(action_user_phone, f"❌ *Monime API Rejected the Payload!*\nStatus Code: {response.status_code}\nError Details: {response.text}")
-            simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
+            simulated_paylink = f"{BASE_URL}/checkout/pay/{order_id}"
             send_whatsapp_message(b_phone, f"🎉 *Order Confirmed!* (Fallback Simulator Link):\n🔗 {simulated_paylink}")
             
     except Exception as api_err:
         if action_user_phone: send_whatsapp_message(action_user_phone, f"❌ *Connection Exception details caught:* {str(api_err)}")
-        simulated_paylink = f"https://agro-market-bot.onrender.com/checkout/pay/{order_id}"
+        simulated_paylink = f"{BASE_URL}/checkout/pay/{order_id}"
         send_whatsapp_message(b_phone, f"🔗 Fallback Simulator Link:\n{simulated_paylink}")
         
     if action_user_phone:
